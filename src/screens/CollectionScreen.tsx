@@ -21,7 +21,7 @@ const UNLOCK_COSTS: Record<string, number> = {
 
 export default function CollectionScreen() {
   const store = useGameStore();
-  const { heroes, gold, gems, setScreen, unlockHero, levelUpHero, ascendHero, unequipItem, equipItem, toggleFavorite } = store;
+  const { heroes, gold, gems, setScreen, unlockHero, levelUpHero, ascendHero, unequipItem, equipItem, toggleFavorite, autoEquipBest } = store;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [equipTab, setEquipTab] = useState<'weapon' | 'armor' | 'accessory'>('weapon');
   const [filter, setFilter] = useState<'all' | 'unlocked' | 'favorite'>('all');
@@ -226,7 +226,15 @@ export default function CollectionScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.sectionTitle}>EQUIPMENT</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={styles.sectionTitle}>EQUIPMENT</Text>
+                  <TouchableOpacity
+                    style={styles.autoEquipBtn}
+                    onPress={() => autoEquipBest(selectedHero.id)}
+                  >
+                    <Text style={styles.autoEquipText}>✨ Auto-equip best</Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={styles.equipSlots}>
                   <EquipSlot
                     label="Weapon"
@@ -369,4 +377,6 @@ const styles = StyleSheet.create({
   empty: { color: '#444', fontSize: 12, textAlign: 'center', padding: 20 },
   noDetail: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   noDetailText: { color: '#333', fontSize: 13, textAlign: 'center' },
+  autoEquipBtn: { backgroundColor: '#3498db33', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: '#3498db' },
+  autoEquipText: { color: '#3498db', fontSize: 10, fontWeight: '700' },
 });

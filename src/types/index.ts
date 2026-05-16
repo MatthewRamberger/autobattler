@@ -267,7 +267,9 @@ export type Screen =
   | 'arena'
   | 'forge'
   | 'daily'
-  | 'stats';
+  | 'stats'
+  | 'codex'
+  | 'chests';
 
 export interface Achievement {
   id: string;

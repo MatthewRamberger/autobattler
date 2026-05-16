@@ -14,6 +14,8 @@ import ArenaScreen from './src/screens/ArenaScreen';
 import ForgeScreen from './src/screens/ForgeScreen';
 import DailyScreen from './src/screens/DailyScreen';
 import StatsScreen from './src/screens/StatsScreen';
+import CodexScreen from './src/screens/CodexScreen';
+import ChestScreen from './src/screens/ChestScreen';
 
 export default function App() {
   const { currentScreen, hydrated, hydrate } = useGameStore();
@@ -45,6 +47,8 @@ export default function App() {
       case 'forge': return <ForgeScreen />;
       case 'daily': return <DailyScreen />;
       case 'stats': return <StatsScreen />;
+      case 'codex': return <CodexScreen />;
+      case 'chests': return <ChestScreen />;
       default: return <HomeScreen />;
     }
   }

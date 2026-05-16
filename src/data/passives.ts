@@ -220,6 +220,65 @@ export const PASSIVES: Record<string, PassiveHooks> = {
     },
   },
 
+  // Stagheart — gains +5% attack per surviving ally.
+  druid_2: {
+    onTurnStart: (unit) => {
+      // Counted at action time; we don't have `all` here, so stash a multiplier.
+      // The actual ally count gets applied via modifyOutgoing using state on the unit.
+      // We approximate by recomputing per outgoing call below.
+    },
+    modifyOutgoing: (atk, _tgt, ctx) => {
+      // We don't have access to all units here; estimate using attacker.killCount as a poor proxy.
+      // Better: use a counter set in onTickStart. Engine doesn't expose 'all' to modifyOutgoing,
+      // so we instead store ally count via the onTickStart hook each tick.
+      const allies = (atk as any)._wildAllies as number | undefined;
+      if (allies && allies > 0) ctx.raw *= 1 + 0.05 * allies;
+    },
+    onTickStart: (unit, all) => {
+      const allies = all.filter((u) => u.isPlayer === unit.isPlayer && u.isAlive && u.id !== unit.id).length;
+      (unit as any)._wildAllies = allies;
+    },
+  },
+
+  // Lichlord — 30% lifesteal + 15% damage vs low-HP targets.
+  necro_2: {
+    modifyOutgoing: (_atk, tgt, ctx) => {
+      if (tgt.hp / tgt.maxHp < 0.5) ctx.raw *= 1.15;
+    },
+    onDamageDealt: (atk, _tgt, dmg) => {
+      const heal = Math.round(dmg * 0.3);
+      if (heal > 0) {
+        atk.hp = Math.min(atk.maxHp, atk.hp + heal);
+        atk.healingDone += heal;
+      }
+    },
+  },
+
+  // Stormwalker — every 3rd basic attack chains 50% to a nearby enemy.
+  monk_2: {
+    onDamageDealt: (atk, tgt, dmg, all, events, log, tick) => {
+      const counter = ((atk as any)._tempestCount as number | undefined) ?? 0;
+      const nextCount = counter + 1;
+      (atk as any)._tempestCount = nextCount;
+      if (nextCount % 3 !== 0) return;
+      const nearby = all.filter(
+        (u) => u.isAlive && u.isPlayer !== atk.isPlayer && u.id !== tgt.id && distance(u, tgt) <= 2
+      );
+      if (nearby.length === 0) return;
+      const target = nearby[0];
+      const chain = Math.max(1, Math.round(dmg * 0.5));
+      target.hp = Math.max(0, target.hp - chain);
+      atk.damageDealt += chain;
+      events.push({ tick, kind: 'damage', sourceId: atk.id, targetId: target.id, value: chain, element: 'lightning' });
+      if (target.hp === 0 && target.isAlive) {
+        target.isAlive = false;
+        atk.killCount++;
+        events.push({ tick, kind: 'death', targetId: target.id });
+        log.push({ tick, type: 'death', text: `${target.name} is struck down by tempest!`, targetId: target.id });
+      }
+    },
+  },
+
   // Solaris — overflow healing becomes a shield for the ally.
   // Implemented by patching applyHeal via a hook approach won't work without
   // refactor; instead we mimic it via onTickStart: if any allies near max HP

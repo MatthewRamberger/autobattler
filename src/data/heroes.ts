@@ -253,6 +253,45 @@ export const HEROES: Hero[] = [
     passiveDesc: 'Sunblessing: overflow healing converts to shields for the ally.',
     description: 'A high priestess of the dawn whose blessings transcend mortality.',
   }),
+  makeHero({
+    id: 'druid_2', name: 'Stagheart', heroClass: 'Druid',
+    baseStats: {
+      maxHp: 175, attack: 36, defense: 14, speed: 5, range: 3,
+      critRate: 0.12, critDamage: 1.7, dodge: 0.14,
+      maxMana: 140, manaRegen: 8, element: 'nature',
+      resistance: { nature: 0.6, fire: -0.15 },
+    },
+    rarity: 'legendary', icon: '🦌', portraitSeed: 181,
+    abilityId: 'thornedvines',
+    passiveDesc: "Wildsoul: gains +5% attack per surviving ally.",
+    description: 'Antlered guardian of the deepwood. Stronger when others stand with him.',
+  }),
+  makeHero({
+    id: 'necro_2', name: 'Lichlord', heroClass: 'Necromancer',
+    baseStats: {
+      maxHp: 140, attack: 60, defense: 8, speed: 4, range: 4,
+      critRate: 0.14, critDamage: 1.8, dodge: 0.06,
+      maxMana: 160, manaRegen: 9, element: 'shadow',
+      resistance: { shadow: 0.6, holy: -0.3 },
+    },
+    rarity: 'mythic', icon: '👑', portraitSeed: 191,
+    abilityId: 'drainlife',
+    passiveDesc: 'Necropotence: 30% lifesteal, +15% damage vs targets below 50% HP.',
+    description: 'A crowned king of bone, his every spell stealing the breath of the living.',
+  }),
+  makeHero({
+    id: 'monk_2', name: 'Stormwalker', heroClass: 'Monk',
+    baseStats: {
+      maxHp: 155, attack: 44, defense: 14, speed: 7, range: 1,
+      critRate: 0.24, critDamage: 1.9, dodge: 0.22,
+      maxMana: 110, manaRegen: 9, element: 'lightning',
+      resistance: { lightning: 0.5, physical: 0.1 },
+    },
+    rarity: 'mythic', icon: '🌩️', portraitSeed: 201,
+    abilityId: 'flurry',
+    passiveDesc: 'Tempest: every 3rd attack chains 50% damage to a nearby enemy.',
+    description: 'A monk whose strikes call down the thunder. Lightning answers her fists.',
+  }),
 ];
 
 export function getHeroById(id: string): Hero | undefined {

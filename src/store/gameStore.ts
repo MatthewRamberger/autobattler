@@ -59,6 +59,12 @@ interface GameStore extends GameState {
   // Item enchanting (random affix at gem cost).
   enchantEquipment: (id: string) => void;
 
+  // Auto-equip the best owned gear for a hero across all three slots.
+  autoEquipBest: (heroId: string) => void;
+
+  // Mystery chest: roll a weighted reward.
+  openMysteryChest: (rarity: 'wooden' | 'silver' | 'gold' | 'mythic') => Promise<{ items: { id: string; qty: number }[]; gold: number; gems: number }>;
+
   setBattleSpeed: (s: 1 | 2 | 4) => void;
   hydrate: () => Promise<void>;
   reset: () => void;
@@ -747,6 +753,139 @@ export const useGameStore = create<GameStore>((set, get) => ({
       equipment: { ...state.equipment, [id]: updated },
     });
     persist(get());
+  },
+
+  autoEquipBest: (heroId) => {
+    const state = get();
+    const hero = state.heroes[heroId];
+    if (!hero) return;
+    // Helper: score an equipment piece for this hero.
+    function score(eq: Equipment): number {
+      let s = 0;
+      const b = eq.statBonus;
+      s += (b.attack ?? 0) * 4;
+      s += (b.defense ?? 0) * 3;
+      s += (b.hp ?? 0) * 0.4;
+      s += (b.speed ?? 0) * 4;
+      s += (b.critRate ?? 0) * 100;
+      s += (b.critDamage ?? 0) * 50;
+      s += (b.dodge ?? 0) * 60;
+      s += (b.maxMana ?? 0) * 0.5;
+      s += (b.manaRegen ?? 0) * 4;
+      // Forge level adds value through statBonus already.
+      // Set bonus heuristic: if other equipped items share the same set, prefer it.
+      const otherEq = [
+        hero.weaponId && state.equipment[hero.weaponId],
+        hero.armorId && state.equipment[hero.armorId],
+        hero.accessoryId && state.equipment[hero.accessoryId],
+      ].filter((x): x is Equipment => !!x && x.id !== eq.id);
+      const sameSet = otherEq.filter((o) => o.setId && o.setId === eq.setId).length;
+      if (eq.setId && sameSet >= 1) s += 20;
+      return s;
+    }
+
+    // We have to unequip current first to free slots, then equip best.
+    let equipment = { ...state.equipment };
+    let updatedHero: Hero = { ...hero };
+
+    function unequipSlot(slot: 'weaponId' | 'armorId' | 'accessoryId') {
+      const cur = updatedHero[slot] as string | null;
+      if (cur) {
+        equipment[cur] = { ...equipment[cur], owned: equipment[cur].owned + 1 };
+        updatedHero = { ...updatedHero, [slot]: null };
+      }
+    }
+
+    function equipSlot(slot: 'weaponId' | 'armorId' | 'accessoryId', id: string | null) {
+      if (!id) return;
+      const item = equipment[id];
+      if (!item || item.owned <= 0) return;
+      equipment[id] = { ...item, owned: item.owned - 1 };
+      updatedHero = { ...updatedHero, [slot]: id };
+    }
+
+    // Unequip everything first (so previously-equipped items go into the picker pool).
+    unequipSlot('weaponId'); unequipSlot('armorId'); unequipSlot('accessoryId');
+
+    function pickBestFromCurrent(type: Equipment['type']): string | null {
+      const available = Object.values(equipment).filter((e) =>
+        e.type === type && e.owned > 0 &&
+        (!e.requiredClass || e.requiredClass.includes(hero.heroClass))
+      );
+      if (available.length === 0) return null;
+      const sorted = [...available].sort((a, b) => score(b) - score(a));
+      return sorted[0]?.id ?? null;
+    }
+
+    const bestWeapon = pickBestFromCurrent('weapon');
+    const bestArmor = pickBestFromCurrent('armor');
+    const bestAccessory = pickBestFromCurrent('accessory');
+
+    if (bestWeapon) equipSlot('weaponId', bestWeapon);
+    if (bestArmor) equipSlot('armorId', bestArmor);
+    if (bestAccessory) equipSlot('accessoryId', bestAccessory);
+
+    set({
+      equipment,
+      heroes: { ...state.heroes, [heroId]: updatedHero },
+    });
+    persist(get());
+  },
+
+  openMysteryChest: async (rarity) => {
+    const state = get();
+    const costs: Record<typeof rarity, { gold?: number; gems?: number }> = {
+      wooden: { gold: 200 },
+      silver: { gold: 800 },
+      gold: { gems: 30 },
+      mythic: { gems: 100 },
+    } as any;
+    const cost = costs[rarity];
+    if (cost.gold && state.gold < cost.gold) return { items: [], gold: 0, gems: 0 };
+    if (cost.gems && state.gems < cost.gems) return { items: [], gold: 0, gems: 0 };
+
+    // Reward weights per chest tier.
+    const tierWeights: Record<typeof rarity, Partial<Record<string, number>>> = {
+      wooden: { common: 60, rare: 30, epic: 9, legendary: 1, mythic: 0 },
+      silver: { common: 20, rare: 50, epic: 25, legendary: 5, mythic: 0 },
+      gold: { common: 5, rare: 25, epic: 40, legendary: 25, mythic: 5 },
+      mythic: { common: 0, rare: 5, epic: 25, legendary: 50, mythic: 20 },
+    } as any;
+    const items: { id: string; qty: number }[] = [];
+    const rolls = rarity === 'mythic' ? 5 : rarity === 'gold' ? 4 : rarity === 'silver' ? 3 : 2;
+    const pool = Object.values(EQUIPMENT);
+    for (let r = 0; r < rolls; r++) {
+      // Weighted rarity pick.
+      const weights = tierWeights[rarity];
+      const totalW = Object.values(weights).reduce<number>((s, n) => s + (n ?? 0), 0);
+      let roll = Math.random() * totalW;
+      let pickedRarity = 'common';
+      for (const [k, v] of Object.entries(weights)) {
+        if (v == null) continue;
+        if (roll < v) { pickedRarity = k; break; }
+        roll -= v;
+      }
+      const candidates = pool.filter((p) => p.rarity === pickedRarity);
+      const pick = candidates[Math.floor(Math.random() * candidates.length)];
+      if (pick) items.push({ id: pick.id, qty: 1 });
+    }
+    // Bonus gold/gems.
+    const bonusGold = rarity === 'mythic' ? 1000 : rarity === 'gold' ? 300 : rarity === 'silver' ? 100 : 30;
+    const bonusGems = rarity === 'mythic' ? 25 : rarity === 'gold' ? 8 : rarity === 'silver' ? 2 : 0;
+
+    // Apply rewards.
+    const newEquipment = { ...state.equipment };
+    for (const it of items) {
+      const eq = newEquipment[it.id];
+      if (eq) newEquipment[it.id] = { ...eq, owned: eq.owned + it.qty };
+    }
+    set({
+      gold: state.gold - (cost.gold ?? 0) + bonusGold,
+      gems: state.gems - (cost.gems ?? 0) + bonusGems,
+      equipment: newEquipment,
+    });
+    persist(get());
+    return { items, gold: bonusGold, gems: bonusGems };
   },
 
   setBattleSpeed: (s) => { set({ battleSpeed: s }); persist(get()); },

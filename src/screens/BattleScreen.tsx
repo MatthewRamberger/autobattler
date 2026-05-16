@@ -41,6 +41,17 @@ interface Projectile {
   anim: Animated.Value;
 }
 
+function themeFor(difficulty: string) {
+  switch (difficulty) {
+    case 'easy': return { player: '#0d1a0d', enemy: '#1a0d0d' };
+    case 'medium': return { player: '#0d1a1a', enemy: '#1a1a0d' };
+    case 'hard': return { player: '#0d0d1a', enemy: '#1f0d12' };
+    case 'boss': return { player: '#1a0d1a', enemy: '#1a0d0d' };
+    case 'nightmare': return { player: '#0a0a1a', enemy: '#1a0a0a' };
+    default: return { player: '#0d1a0d', enemy: '#1a0d0d' };
+  }
+}
+
 const STATUS_ICON: Record<StatusEffectType, string> = {
   poison: '☠️', burn: '🔥', stun: '💫', freeze: '❄️',
   slow: '🐌', regen: '💚', shield: '🛡️', taunt: '😡',
@@ -426,12 +437,13 @@ export default function BattleScreen() {
             <View key={row} style={styles.gridRow}>
               {Array.from({ length: GRID_COLS }, (_, col) => {
                 const isPlayerSide = col <= 4;
+                const theme = themeFor(level?.difficulty ?? 'easy');
                 return (
                   <View
                     key={col}
                     style={[
                       styles.cell,
-                      isPlayerSide ? styles.playerCell : styles.enemyCell,
+                      { backgroundColor: isPlayerSide ? theme.player : theme.enemy },
                       col === 4 && styles.dividerRight,
                       col === 5 && styles.dividerLeft,
                     ]}
