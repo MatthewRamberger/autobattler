@@ -1,0 +1,26 @@
+import { Achievement } from '../types';
+
+export const ACHIEVEMENTS: Achievement[] = [
+  { id: 'first_win', name: 'First Blood', description: 'Win your first battle.', icon: '🩸',
+    goal: 1, reward: { gold: 100, gems: 5 } },
+  { id: 'win_10', name: 'Veteran', description: 'Win 10 battles.', icon: '🎖️',
+    goal: 10, reward: { gold: 300, gems: 10 } },
+  { id: 'win_50', name: 'Champion', description: 'Win 50 battles.', icon: '🏆',
+    goal: 50, reward: { gold: 1500, gems: 25 } },
+  { id: 'kill_100', name: 'Slayer', description: 'Defeat 100 enemies.', icon: '⚔️',
+    goal: 100, reward: { gold: 400, gems: 10 } },
+  { id: 'damage_10000', name: 'Heavy Hitter', description: 'Deal 10,000 total damage.', icon: '💥',
+    goal: 10000, reward: { gold: 500, gems: 10 } },
+  { id: 'unlock_5_heroes', name: 'Collector', description: 'Unlock 5 heroes.', icon: '🦸',
+    goal: 5, reward: { gold: 500, gems: 15 } },
+  { id: 'forge_5', name: 'Master Smith', description: 'Forge equipment to +5.', icon: '🔨',
+    goal: 1, reward: { gold: 800, gems: 20, itemId: 'amulet_void' } },
+  { id: 'arena_10', name: 'Gladiator', description: 'Reach arena wave 10.', icon: '🏟️',
+    goal: 10, reward: { gold: 600, gems: 15 } },
+  { id: 'arena_25', name: 'Conqueror', description: 'Reach arena wave 25.', icon: '👑',
+    goal: 25, reward: { gold: 2000, gems: 50, itemId: 'sword_mythic' } },
+  { id: 'beat_boss', name: 'Boss Slayer', description: 'Defeat the Shadow Lord.', icon: '👿',
+    goal: 1, reward: { gold: 1000, gems: 30 } },
+  { id: 'campaign', name: 'Worldbreaker', description: 'Clear the entire campaign.', icon: '🌌',
+    goal: 1, reward: { gold: 5000, gems: 100, itemId: 'armor_phoenix' } },
+];

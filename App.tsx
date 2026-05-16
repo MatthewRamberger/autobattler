@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useGameStore } from './src/store/gameStore';
 import HomeScreen from './src/screens/HomeScreen';
@@ -7,9 +8,26 @@ import EquipmentScreen from './src/screens/EquipmentScreen';
 import LevelsScreen from './src/screens/LevelsScreen';
 import BattlePrepScreen from './src/screens/BattlePrepScreen';
 import BattleScreen from './src/screens/BattleScreen';
+import ShopScreen from './src/screens/ShopScreen';
+import AchievementsScreen from './src/screens/AchievementsScreen';
+import ArenaScreen from './src/screens/ArenaScreen';
+import ForgeScreen from './src/screens/ForgeScreen';
 
 export default function App() {
-  const { currentScreen } = useGameStore();
+  const { currentScreen, hydrated, hydrate } = useGameStore();
+
+  useEffect(() => {
+    hydrate();
+  }, []);
+
+  if (!hydrated) {
+    return (
+      <View style={styles.loading}>
+        <StatusBar style="light" />
+        <ActivityIndicator size="large" color="#f1c40f" />
+      </View>
+    );
+  }
 
   function renderScreen() {
     switch (currentScreen) {
@@ -19,6 +37,10 @@ export default function App() {
       case 'levels': return <LevelsScreen />;
       case 'battle-prep': return <BattlePrepScreen />;
       case 'battle': return <BattleScreen />;
+      case 'shop': return <ShopScreen />;
+      case 'achievements': return <AchievementsScreen />;
+      case 'arena': return <ArenaScreen />;
+      case 'forge': return <ForgeScreen />;
       default: return <HomeScreen />;
     }
   }
@@ -30,3 +52,7 @@ export default function App() {
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  loading: { flex: 1, backgroundColor: '#0a0a14', justifyContent: 'center', alignItems: 'center' },
+});
