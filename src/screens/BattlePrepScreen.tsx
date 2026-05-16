@@ -17,9 +17,13 @@ export default function BattlePrepScreen() {
   const store = useGameStore();
   const {
     currentLevelId, heroes, placedHeroes, setScreen, placeHero, removeHeroFromGrid,
-    clearPlacements, autoPlace, arenaWave,
+    clearPlacements, autoPlace, arenaWave, loadouts, saveLoadout, applyLoadout, deleteLoadout,
+    predictBattle,
   } = store;
   const [selectedHeroId, setSelectedHeroId] = useState<string | null>(null);
+  const [prediction, setPrediction] = useState<{ winRate: number; avgTicks: number } | null>(null);
+  const [predicting, setPredicting] = useState(false);
+  const [showLoadouts, setShowLoadouts] = useState(false);
 
   const isArena = currentLevelId === -1;
   const level = isArena ? null : LEVELS.find((l) => l.id === currentLevelId);
@@ -88,10 +92,72 @@ export default function BattlePrepScreen() {
         <TouchableOpacity style={styles.toolBtn} onPress={() => clearPlacements()}>
           <Text style={styles.toolBtnText}>🗑 Clear</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.toolBtn} onPress={() => setShowLoadouts((s) => !s)}>
+          <Text style={styles.toolBtnText}>📁 Loadouts</Text>
+        </TouchableOpacity>
+        {!isArena && level && (
+          <TouchableOpacity
+            style={styles.toolBtn}
+            disabled={predicting || Object.keys(placedHeroes).length === 0}
+            onPress={async () => {
+              setPredicting(true);
+              const r = await predictBattle(level.id, 8);
+              setPrediction(r);
+              setPredicting(false);
+            }}
+          >
+            <Text style={styles.toolBtnText}>{predicting ? '...' : '🔮 Predict'}</Text>
+          </TouchableOpacity>
+        )}
         <View style={styles.headerCounts}>
           <Text style={styles.countText}>👥 {Object.keys(placedHeroes).length}/5</Text>
         </View>
       </View>
+
+      {prediction && (
+        <View style={styles.predictionRow}>
+          <Text style={styles.predictionText}>
+            Predicted win rate: {Math.round(prediction.winRate * 100)}% · avg {prediction.avgTicks} ticks
+          </Text>
+        </View>
+      )}
+
+      {showLoadouts && (
+        <View style={styles.loadoutsRow}>
+          {([1, 2, 3] as const).map((slot) => {
+            const key = `slot_${slot}`;
+            const lo = loadouts[key];
+            return (
+              <View key={key} style={styles.loadoutSlot}>
+                <Text style={styles.loadoutLabel}>{lo?.name ?? `Loadout ${slot}`}</Text>
+                <View style={styles.loadoutBtns}>
+                  <TouchableOpacity
+                    style={styles.loSmall}
+                    onPress={() => saveLoadout(key, `Team ${slot}`)}
+                  >
+                    <Text style={styles.loSmallText}>Save</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.loSmall, { backgroundColor: '#27ae60' }]}
+                    disabled={!lo}
+                    onPress={() => applyLoadout(key)}
+                  >
+                    <Text style={styles.loSmallText}>Load</Text>
+                  </TouchableOpacity>
+                  {lo && (
+                    <TouchableOpacity
+                      style={[styles.loSmall, { backgroundColor: '#c0392b' }]}
+                      onPress={() => deleteLoadout(key)}
+                    >
+                      <Text style={styles.loSmallText}>X</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       <View style={styles.gridContainer}>
         <View style={styles.grid}>
@@ -246,6 +312,14 @@ const styles = StyleSheet.create({
   toolbarRow: { flexDirection: 'row', paddingHorizontal: 10, paddingVertical: 6, gap: 6 },
   toolBtn: { backgroundColor: '#1e1e2e', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: '#333' },
   toolBtnText: { color: '#ccc', fontSize: 11 },
+  predictionRow: { backgroundColor: '#2a2a4e', paddingHorizontal: 10, paddingVertical: 6 },
+  predictionText: { color: '#7c83fd', fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  loadoutsRow: { flexDirection: 'row', padding: 6, gap: 4 },
+  loadoutSlot: { flex: 1, backgroundColor: '#1e1e2e', borderRadius: 6, padding: 4, borderWidth: 1, borderColor: '#333' },
+  loadoutLabel: { color: '#ccc', fontSize: 10, textAlign: 'center', marginBottom: 4 },
+  loadoutBtns: { flexDirection: 'row', gap: 2 },
+  loSmall: { flex: 1, backgroundColor: '#3498db', borderRadius: 4, paddingVertical: 4, alignItems: 'center' },
+  loSmallText: { color: '#fff', fontSize: 9, fontWeight: '700' },
   headerCounts: { flex: 1, alignItems: 'flex-end' },
   countText: { color: '#666', fontSize: 11 },
   gridContainer: { paddingHorizontal: 4 },

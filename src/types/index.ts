@@ -202,7 +202,8 @@ export interface BattleEvent {
     | 'mana'
     | 'victory'
     | 'defeat'
-    | 'wave';
+    | 'wave'
+    | 'spawn';
   sourceId?: string;
   targetId?: string;
   targetIds?: string[];
@@ -212,6 +213,7 @@ export interface BattleEvent {
   element?: Element;
   toPosition?: GridPosition;
   fromPosition?: GridPosition;
+  unit?: BattleUnit;
 }
 
 export interface BattleResult {
@@ -323,4 +325,7 @@ export interface GameState {
   dailyResetAt: number;
   loginStreak: number;
   lastLoginDay: number; // floor(Date.now() / 86400000)
+
+  // Up to 3 saved team compositions (name -> placement map)
+  loadouts: Record<string, { name: string; placements: Record<string, GridPosition> }>;
 }

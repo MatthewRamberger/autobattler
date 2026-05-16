@@ -518,7 +518,7 @@ function runBossMechanic(
               text: `${boss.name} summons a Shadow Spawn!`,
               targetId: minion.id,
             });
-            events.push({ tick, kind: 'status_apply', targetId: minion.id, status: 'rage', value: 0 });
+            events.push({ tick, kind: 'spawn', targetId: minion.id, unit: { ...minion, statuses: [...minion.statuses], resistance: { ...minion.resistance } } });
             break;
           }
         }
@@ -534,12 +534,19 @@ function runBossMechanic(
 export function computeBattle(
   playerUnits: BattleUnit[],
   enemyUnits: BattleUnit[],
-  options?: { bossMechanic?: 'enrage' | 'summon' | 'aoe-burst' | 'lifelink' }
+  options?: {
+    bossMechanic?: 'enrage' | 'summon' | 'aoe-burst' | 'lifelink';
+    extraWaves?: BattleUnit[][];   // additional enemy waves that spawn when the previous is cleared
+  }
 ): BattleResult {
   const units: BattleUnit[] = [
     ...playerUnits.map(cloneUnit),
     ...enemyUnits.map(cloneUnit),
   ];
+
+  const remainingWaves = (options?.extraWaves ?? []).map((w) => w.map(cloneUnit));
+  const totalWaves = remainingWaves.length + 1;
+  let currentWave = 1;
 
   const log: BattleLogEntry[] = [];
   const events: BattleEvent[] = [];
@@ -550,6 +557,34 @@ export function computeBattle(
     const alive = units.filter((u) => u.isAlive);
     const playerAlive = alive.filter((u) => u.isPlayer);
     const enemyAlive = alive.filter((u) => !u.isPlayer);
+
+    // Spawn next wave if enemies cleared and waves remain
+    if (enemyAlive.length === 0 && remainingWaves.length > 0) {
+      currentWave++;
+      const next = remainingWaves.shift()!;
+      for (const u of next) {
+        units.push(u);
+        // Emit a spawn event so the visual replay can add the unit to the grid.
+        events.push({ tick, kind: 'spawn', targetId: u.id, unit: { ...u, statuses: [...u.statuses], resistance: { ...u.resistance } } });
+      }
+      // Partial heal between waves to make multi-wave winnable
+      for (const p of playerAlive) {
+        const healed = Math.min(p.maxHp - p.hp, Math.round(p.maxHp * 0.3));
+        if (healed > 0) {
+          p.hp += healed;
+          events.push({ tick, kind: 'heal', targetId: p.id, value: healed });
+        }
+        p.mana = Math.min(p.maxMana, p.mana + Math.round(p.maxMana * 0.4));
+      }
+      log.push({
+        tick, type: 'wave',
+        text: `─── Wave ${currentWave} / ${totalWaves} ───`,
+      });
+      events.push({ tick, kind: 'wave', value: currentWave });
+      tick++; // small pause
+      continue;
+    }
+
     if (playerAlive.length === 0 || enemyAlive.length === 0) break;
 
     // 1) Status ticks

@@ -116,9 +116,19 @@ export default function BattleScreen() {
       });
     });
 
+    // Build extra waves if the level defines them.
+    const extraWaves: BattleUnit[][] | undefined = level?.waves?.map((wave, wi) =>
+      wave.map((e, idx) => buildEnemyUnit({
+        name: e.name, heroClass: e.heroClass, level: e.level,
+        position: e.position, icon: e.icon, index: 100 + wi * 10 + idx,
+        element: e.element, stars: e.stars, abilityId: e.abilityId,
+      }))
+    );
+
     // Pre-compute the full battle.
     const result = computeBattle(playerUnits, enemyUnits, {
       bossMechanic: level?.bossMechanic,
+      extraWaves,
     });
     eventsRef.current = result.events;
     logRef.current = result.log;
@@ -270,6 +280,27 @@ export default function BattleScreen() {
           const tgt = liveUnitsRef.current.find((u) => u.id === ev.targetId);
           if (src && tgt) launchProjectile(src.position, tgt.position, ev.element ?? 'physical');
         }
+        break;
+      case 'spawn':
+        if (ev.unit) {
+          const u = ev.unit;
+          const newUnit: LiveUnit = {
+            ...u,
+            position: { ...u.position },
+            shake: new Animated.Value(0),
+            flash: new Animated.Value(0),
+            positionAnim: { x: new Animated.Value(u.position.col), y: new Animated.Value(u.position.row) },
+          };
+          setLiveUnits((prev) => {
+            if (prev.some((p) => p.id === u.id)) return prev;
+            const next = [...prev, newUnit];
+            liveUnitsRef.current = next;
+            return next;
+          });
+        }
+        break;
+      case 'wave':
+        // Already logged; allows replay to scroll battle log.
         break;
     }
   }

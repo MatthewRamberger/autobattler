@@ -4,7 +4,7 @@ import { useGameStore } from '../store/gameStore';
 import { RARITY_COLORS, MAX_FORGE_LEVEL, forgeShardsRequired } from '../data/equipment';
 
 export default function ForgeScreen() {
-  const { setScreen, equipment, gold, forgeEquipment } = useGameStore();
+  const { setScreen, equipment, gold, gems, forgeEquipment, enchantEquipment } = useGameStore();
   const [filter, setFilter] = useState<'all' | 'weapon' | 'armor' | 'accessory'>('all');
 
   const items = Object.values(equipment).filter((e) =>
@@ -18,11 +18,14 @@ export default function ForgeScreen() {
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>FORGE</Text>
-        <Text style={styles.gold}>💰 {gold}</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Text style={styles.gold}>💰 {gold}</Text>
+          <Text style={[styles.gold, { color: '#bb8fce' }]}>💎 {gems}</Text>
+        </View>
       </View>
 
       <Text style={styles.help}>
-        Forge equipment to +5 with shards (won from battles) and gold. Each level adds +20% to stats.
+        Forge with shards/gold to add +20% stats per level (max +5). Enchant with gems to add a random affix.
       </Text>
 
       <View style={styles.filterRow}>
@@ -66,27 +69,41 @@ export default function ForgeScreen() {
                   <Text style={styles.metaText}>Lv {item.level}/{MAX_FORGE_LEVEL}</Text>
                 </View>
               </View>
-              <TouchableOpacity
-                style={[styles.forgeBtn, !can && styles.forgeDisabled]}
-                disabled={!can}
-                onPress={() => {
-                  if (!can) {
-                    if (maxed) Alert.alert('Maxed', 'Already at max forge level.');
-                    else Alert.alert('Cannot forge', `Need ${cost} shards and ${goldCost} gold.`);
-                    return;
-                  }
-                  forgeEquipment(item.id);
-                }}
-              >
-                <Text style={[styles.forgeText, !can && { color: '#555' }]}>
-                  {maxed ? 'MAX' : `+${item.level + 1}`}
-                </Text>
-                {!maxed && (
-                  <Text style={styles.forgeCost}>
-                    {cost} shards · {goldCost}💰
+              <View style={{ gap: 4 }}>
+                <TouchableOpacity
+                  style={[styles.forgeBtn, !can && styles.forgeDisabled]}
+                  disabled={!can}
+                  onPress={() => {
+                    if (!can) {
+                      if (maxed) Alert.alert('Maxed', 'Already at max forge level.');
+                      else Alert.alert('Cannot forge', `Need ${cost} shards and ${goldCost} gold.`);
+                      return;
+                    }
+                    forgeEquipment(item.id);
+                  }}
+                >
+                  <Text style={[styles.forgeText, !can && { color: '#555' }]}>
+                    {maxed ? 'MAX' : `+${item.level + 1}`}
                   </Text>
-                )}
-              </TouchableOpacity>
+                  {!maxed && (
+                    <Text style={styles.forgeCost}>
+                      {cost} shards · {goldCost}💰
+                    </Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.enchantBtn, (gems < 25 || item.owned <= 0) && styles.forgeDisabled]}
+                  disabled={gems < 25 || item.owned <= 0}
+                  onPress={() => {
+                    if (gems < 25) { Alert.alert('Not enough gems', 'Enchant costs 25 gems.'); return; }
+                    if (item.owned <= 0) { Alert.alert('Item is equipped', 'Unequip first.'); return; }
+                    enchantEquipment(item.id);
+                  }}
+                >
+                  <Text style={styles.enchantText}>Enchant</Text>
+                  <Text style={styles.forgeCost}>25 💎</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           );
         })}
@@ -124,4 +141,6 @@ const styles = StyleSheet.create({
   forgeDisabled: { backgroundColor: '#1a1a2a', borderColor: '#333' },
   forgeText: { color: '#e67e22', fontWeight: '800', fontSize: 14 },
   forgeCost: { color: '#888', fontSize: 9, marginTop: 2 },
+  enchantBtn: { backgroundColor: '#bb8fce33', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center', borderWidth: 1, borderColor: '#bb8fce', minWidth: 80 },
+  enchantText: { color: '#bb8fce', fontWeight: '800', fontSize: 11 },
 });

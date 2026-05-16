@@ -48,6 +48,17 @@ interface GameStore extends GameState {
   // Auto-resolve grind: simulate N battles back-to-back.
   autoResolveLevel: (levelId: number, times: number) => Promise<{ wins: number; losses: number; goldGained: number; expGained: number }>;
 
+  // Loadouts: save/load up to 3 placements.
+  saveLoadout: (slotId: string, name: string) => void;
+  applyLoadout: (slotId: string) => void;
+  deleteLoadout: (slotId: string) => void;
+
+  // Battle prediction (Monte Carlo).
+  predictBattle: (levelId: number, samples?: number) => Promise<{ winRate: number; avgTicks: number }>;
+
+  // Item enchanting (random affix at gem cost).
+  enchantEquipment: (id: string) => void;
+
   setBattleSpeed: (s: 1 | 2 | 4) => void;
   hydrate: () => Promise<void>;
   reset: () => void;
@@ -90,6 +101,7 @@ const INITIAL_STATE: GameState = {
   dailyResetAt: 0,
   loginStreak: 0,
   lastLoginDay: 0,
+  loadouts: {},
 };
 
 function generateShop(): ShopItem[] {
@@ -364,7 +376,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
     if (won) bump('first_win'), bump('win_10'), bump('win_50');
     if (won && state.currentLevelId === 9) bump('beat_boss');
-    if (won && state.currentLevelId === 12) bump('campaign');
+    if (won && state.currentLevelId === 13) bump('campaign');
     bump('kill_100', stats.kills);
     bump('damage_10000', stats.damage);
 
@@ -624,6 +636,119 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return { wins, losses, goldGained, expGained };
   },
 
+  saveLoadout: (slotId, name) => {
+    const state = get();
+    if (Object.keys(state.placedHeroes).length === 0) return;
+    set({
+      loadouts: {
+        ...state.loadouts,
+        [slotId]: { name, placements: { ...state.placedHeroes } },
+      },
+    });
+    persist(get());
+  },
+
+  applyLoadout: (slotId) => {
+    const state = get();
+    const lo = state.loadouts[slotId];
+    if (!lo) return;
+    // Only place heroes the player has unlocked.
+    const placements: Record<string, GridPosition> = {};
+    for (const [hid, pos] of Object.entries(lo.placements)) {
+      if (state.heroes[hid]?.unlocked) placements[hid] = pos;
+    }
+    set({ placedHeroes: placements });
+  },
+
+  deleteLoadout: (slotId) => {
+    const state = get();
+    const { [slotId]: _, ...rest } = state.loadouts;
+    set({ loadouts: rest });
+    persist(get());
+  },
+
+  predictBattle: async (levelId, samples = 12) => {
+    const { computeBattle, buildPlayerUnit, buildEnemyUnit } = await import('../utils/battleEngine');
+    const { LEVELS } = await import('../data/levels');
+    const level = LEVELS.find((l) => l.id === levelId);
+    if (!level) return { winRate: 0, avgTicks: 0 };
+    const state = get();
+    const placedIds = Object.keys(state.placedHeroes);
+    if (placedIds.length === 0) return { winRate: 0, avgTicks: 0 };
+
+    let wins = 0;
+    let ticks = 0;
+    for (let i = 0; i < samples; i++) {
+      const playerUnits = placedIds.map((heroId) => {
+        const hero = state.heroes[heroId];
+        const stats = getHeroEffectiveStats(heroId, state)!;
+        return buildPlayerUnit({
+          heroId, name: hero.name, heroClass: hero.heroClass,
+          maxHp: stats.maxHp, attack: stats.attack, defense: stats.defense,
+          speed: stats.speed, range: stats.range,
+          critRate: stats.critRate, critDamage: stats.critDamage, dodge: stats.dodge,
+          maxMana: stats.maxMana, manaRegen: stats.manaRegen,
+          element: stats.element, resistance: stats.resistance,
+          position: state.placedHeroes[heroId], icon: hero.icon, portraitSeed: hero.portraitSeed,
+          stars: hero.stars, abilityId: hero.abilityId,
+        });
+      });
+      const enemyUnits = level.enemies.map((e, idx) => buildEnemyUnit({
+        name: e.name, heroClass: e.heroClass, level: e.level,
+        position: e.position, icon: e.icon, index: idx,
+        element: e.element, stars: e.stars, abilityId: e.abilityId,
+      }));
+      const extraWaves = level.waves?.map((wave, wi) =>
+        wave.map((e, idx) => buildEnemyUnit({
+          name: e.name, heroClass: e.heroClass, level: e.level,
+          position: e.position, icon: e.icon, index: 100 + wi * 10 + idx,
+          element: e.element, stars: e.stars, abilityId: e.abilityId,
+        }))
+      );
+      const result = computeBattle(playerUnits, enemyUnits, {
+        bossMechanic: level.bossMechanic, extraWaves,
+      });
+      if (result.won) wins++;
+      ticks += result.totalTicks;
+    }
+    return { winRate: wins / samples, avgTicks: Math.round(ticks / samples) };
+  },
+
+  enchantEquipment: (id) => {
+    const state = get();
+    const item = state.equipment[id];
+    if (!item || item.owned <= 0) return;
+    const cost = 25;
+    if (state.gems < cost) return;
+    // Pick a random affix not already on the item.
+    type Affix = keyof Equipment['statBonus'];
+    const candidates: Array<{ key: Affix; min: number; max: number; isPct?: boolean }> = [
+      { key: 'attack', min: 3, max: 12 },
+      { key: 'defense', min: 3, max: 12 },
+      { key: 'hp', min: 10, max: 40 },
+      { key: 'speed', min: 1, max: 2 },
+      { key: 'critRate', min: 0.03, max: 0.08, isPct: true },
+      { key: 'dodge', min: 0.03, max: 0.08, isPct: true },
+      { key: 'maxMana', min: 10, max: 30 },
+      { key: 'manaRegen', min: 1, max: 3 },
+    ];
+    const free = candidates.filter((c) => !(c.key in item.statBonus));
+    const pool = free.length > 0 ? free : candidates;
+    const affix = pool[Math.floor(Math.random() * pool.length)];
+    const val = affix.isPct
+      ? +(affix.min + Math.random() * (affix.max - affix.min)).toFixed(2)
+      : Math.round(affix.min + Math.random() * (affix.max - affix.min));
+    const updated: Equipment = {
+      ...item,
+      statBonus: { ...item.statBonus, [affix.key]: ((item.statBonus as any)[affix.key] ?? 0) + val },
+    };
+    set({
+      gems: state.gems - cost,
+      equipment: { ...state.equipment, [id]: updated },
+    });
+    persist(get());
+  },
+
   setBattleSpeed: (s) => { set({ battleSpeed: s }); persist(get()); },
 
   hydrate: async () => {
@@ -699,6 +824,7 @@ function persist(state: GameState) {
       dailyResetAt: state.dailyResetAt,
       loginStreak: state.loginStreak,
       lastLoginDay: state.lastLoginDay,
+      loadouts: state.loadouts,
     };
     AsyncStorage.setItem(SAVE_KEY, JSON.stringify(toSave)).catch(() => {});
   }, 250);
@@ -786,6 +912,16 @@ export interface Synergy {
   threshold: number;
 }
 
+// Hero bonds: pairs of specific heroes give a bonus when both placed.
+export const HERO_BONDS: Array<{ pair: [string, string]; name: string; bonus: string }> = [
+  { pair: ['warrior_1', 'paladin_1'], name: 'Shield Brothers', bonus: 'Both gain +10% defense and +5% maxHP.' },
+  { pair: ['mage_1', 'mage_2'], name: 'Elemental Convergence', bonus: 'Burn and freeze chance increased.' },
+  { pair: ['archer_1', 'rogue_1'], name: 'Silent Hunt', bonus: 'Both gain +10% crit rate.' },
+  { pair: ['cleric_1', 'paladin_2'], name: 'Dawn Communion', bonus: 'Healing effectiveness +25%.' },
+  { pair: ['necro_1', 'druid_1'], name: 'Cycle of Souls', bonus: 'Both gain +15% lifesteal on basic attacks.' },
+  { pair: ['monk_1', 'berserker_1'], name: 'Iron Fist Pact', bonus: 'Both gain +10% attack and +1 speed.' },
+];
+
 export function computeTeamSynergies(placedHeroIds: string[], store: GameStore): Synergy[] {
   const classes: Record<string, number> = {};
   const elements: Record<string, number> = {};
@@ -809,7 +945,7 @@ export function computeTeamSynergies(placedHeroIds: string[], store: GameStore):
     { id: 'shadow', name: 'Eclipse', description: '2+ Shadow heroes: +15% lifesteal.', threshold: 2, source: 'element', key: 'shadow' },
   ];
 
-  return defs.map((d) => {
+  const list: Synergy[] = defs.map((d) => {
     const count = d.source === 'class' ? (classes[d.key] ?? 0) : (elements[d.key] ?? 0);
     return {
       id: d.id, name: d.name, description: d.description,
@@ -818,6 +954,19 @@ export function computeTeamSynergies(placedHeroIds: string[], store: GameStore):
       count,
     };
   }).filter((s) => s.count > 0);
+
+  // Active bonds (both heroes placed).
+  const placedSet = new Set(placedHeroIds);
+  for (const b of HERO_BONDS) {
+    if (placedSet.has(b.pair[0]) && placedSet.has(b.pair[1])) {
+      list.push({
+        id: `bond_${b.pair[0]}_${b.pair[1]}`,
+        name: `♥ ${b.name}`, description: b.bonus,
+        threshold: 2, active: true, count: 2,
+      });
+    }
+  }
+  return list;
 }
 
 // Class color helper re-export so screens can use without two imports.

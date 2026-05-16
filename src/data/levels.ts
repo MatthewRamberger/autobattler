@@ -174,6 +174,32 @@ export const LEVELS: Level[] = [
     rewards: { gold: 1200, experience: 900, possibleDrops: ['sword_mythic', 'armor_phoenix', 'amulet_sun'] },
     recommendedPower: 2500,
   },
+  {
+    id: 13,
+    name: 'The Endless Crucible',
+    description: 'Three waves of escalating threats. Survive every one.',
+    difficulty: 'nightmare',
+    enemies: [
+      { name: 'Crucible Guard', heroClass: 'Warrior', level: 14, position: { col: 7, row: 0 }, icon: '⚒️', element: 'physical' },
+      { name: 'Crucible Guard', heroClass: 'Warrior', level: 14, position: { col: 7, row: 2 }, icon: '⚒️', element: 'physical' },
+      { name: 'Crucible Sniper', heroClass: 'Archer', level: 14, position: { col: 9, row: 1 }, icon: '🎯', element: 'physical' },
+    ],
+    waves: [
+      [
+        { name: 'Flame Wraith', heroClass: 'Mage', level: 15, position: { col: 8, row: 0 }, icon: '🔥', element: 'fire', abilityId: 'fireball' },
+        { name: 'Frost Wraith', heroClass: 'Mage', level: 15, position: { col: 8, row: 2 }, icon: '❄️', element: 'ice', abilityId: 'frostnova' },
+        { name: 'Crucible Assassin', heroClass: 'Rogue', level: 15, position: { col: 7, row: 1 }, icon: '🥷', element: 'shadow' },
+      ],
+      [
+        { name: 'Crucible Tyrant', heroClass: 'Berserker', level: 18, stars: 2, position: { col: 8, row: 1 }, icon: '👹', element: 'fire', abilityId: 'boss_aoe_burst' },
+        { name: 'Tyrant Acolyte', heroClass: 'Necromancer', level: 16, position: { col: 9, row: 0 }, icon: '💀', element: 'shadow', abilityId: 'drainlife' },
+        { name: 'Tyrant Acolyte', heroClass: 'Necromancer', level: 16, position: { col: 9, row: 2 }, icon: '💀', element: 'shadow', abilityId: 'drainlife' },
+      ],
+    ],
+    bossMechanic: 'aoe-burst',
+    rewards: { gold: 2000, experience: 1500, possibleDrops: ['sword_mythic', 'armor_phoenix', 'amulet_sun'] },
+    recommendedPower: 3500,
+  },
 ];
 
 export const DIFFICULTY_COLORS: Record<string, string> = {
