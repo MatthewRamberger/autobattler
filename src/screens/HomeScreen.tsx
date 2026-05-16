@@ -1,7 +1,31 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useGameStore } from '../store/gameStore';
 import { LEVELS } from '../data/levels';
+import {
+  Screen, CurrencyBar, Banner, Panel, Plate, palette, gradients, radius, spacing, shadow,
+} from '../components/ui';
+
+const TILES: Array<{
+  screen: string; icon: string; label: string; sub: (c: any) => string;
+  colors: readonly [string, string]; badge?: (c: any) => number;
+}> = [
+  { screen: 'levels', icon: '⚔️', label: 'CAMPAIGN', sub: (c) => `${c.completedLevels}/${LEVELS.length} cleared · boss fights`, colors: ['#ff8f5a', '#d8542a'] },
+  { screen: 'arena', icon: '🏟️', label: 'ARENA', sub: (c) => `Endless gauntlet · best wave ${c.arenaBestWave}`, colors: ['#ff6aa8', '#c0246b'] },
+  { screen: 'collection', icon: '🦸', label: 'HEROES', sub: (c) => `${c.unlockedCount}/${c.totalHeroes} unlocked`, colors: ['#54b8ff', '#1f6fd6'] },
+  { screen: 'equipment', icon: '🎒', label: 'EQUIPMENT', sub: () => 'Weapons · armor · trinkets', colors: ['#5ed36a', '#2c9c3a'] },
+  { screen: 'forge', icon: '🔨', label: 'FORGE', sub: () => 'Upgrade gear with shards', colors: ['#ffb74d', '#e0791a'] },
+  { screen: 'shop', icon: '🏪', label: 'SHOP', sub: () => 'Spend gold & gems', colors: ['#ffd24a', '#e0a016'] },
+  { screen: 'chests', icon: '📦', label: 'CHESTS', sub: () => '4 tiers of loot', colors: ['#c07bff', '#7a3fd0'] },
+  { screen: 'summon', icon: '🔮', label: 'SUMMON', sub: () => 'Pull heroes with gems', colors: ['#b89bff', '#6a3fd0'] },
+  { screen: 'stronghold', icon: '🏰', label: 'STRONGHOLD', sub: () => 'Permanent base upgrades', colors: ['#f6c945', '#d29a1c'] },
+  { screen: 'codex', icon: '📖', label: 'CODEX', sub: () => 'Heroes · classes · abilities', colors: ['#16d0b5', '#0e8a78'] },
+  { screen: 'daily', icon: '📅', label: 'DAILY', sub: (c) => `Streak 🔥 ${c.loginStreak}`, colors: ['#ff8f5a', '#d8542a'], badge: (c) => c.claimableQuests },
+  { screen: 'achievements', icon: '🏆', label: 'AWARDS', sub: () => 'Claim milestones', colors: ['#c07bff', '#7a3fd0'], badge: (c) => c.claimableAchievements },
+  { screen: 'stats', icon: '📊', label: 'STATS', sub: () => 'Lifetime progress', colors: ['#54b8ff', '#1f6fd6'] },
+  { screen: 'settings', icon: '⚙️', label: 'SETTINGS', sub: () => 'Speed · particles · motion', colors: ['#9aa0ad', '#6c7280'] },
+];
 
 export default function HomeScreen() {
   const {
@@ -9,144 +33,112 @@ export default function HomeScreen() {
     totalVictories, totalBattles, totalDamageDealt, totalKills, reset,
     dailyQuests, dailyQuestProgress, achievements, loginStreak,
   } = useGameStore();
+
   const unlockedCount = Object.values(heroes).filter((h) => h.unlocked).length;
+  const totalHeroes = Object.keys(heroes).length;
   const completedLevels = Object.values(levelProgress).filter((p) => p.completed).length;
   const winRate = totalBattles > 0 ? Math.round((totalVictories / totalBattles) * 100) : 0;
   const claimableQuests = dailyQuests.filter((q) => {
     const ap = dailyQuestProgress[q.id];
     return ap && ap.progress >= q.goal && !ap.claimed;
   }).length;
-  const claimableAchievements = Object.entries(achievements).filter(([_id, ap]) => {
-    return !ap.claimed && ap.progress > 0;
-  }).length;
+  const claimableAchievements = Object.entries(achievements).filter(([, ap]) => !ap.claimed && ap.progress > 0).length;
+  const ctx = { completedLevels, arenaBestWave, unlockedCount, totalHeroes, loginStreak, claimableQuests, claimableAchievements };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <Screen>
       <View style={styles.header}>
-        <Text style={styles.title}>⚔️ AUTOBATTLER</Text>
-        <Text style={styles.subtitle}>Assemble. Place. Conquer.</Text>
+        <View style={{ flex: 1 }} />
+        <Banner title="⚔️  AUTOBATTLER" size={20} />
+        <View style={{ flex: 1 }} />
+      </View>
+      <View style={styles.currencyWrap}>
+        <CurrencyBar gold={gold} gems={gems} />
       </View>
 
-      <View style={styles.statsRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>💰 {gold}</Text>
-          <Text style={styles.statLabel}>Gold</Text>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.grid}>
+          {TILES.map((t) => {
+            const badge = t.badge ? t.badge(ctx) : 0;
+            return (
+              <TouchableOpacity key={t.screen} style={styles.tile} activeOpacity={0.85} onPress={() => setScreen(t.screen)}>
+                <LinearGradient colors={t.colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.tileGrad}>
+                  <View style={styles.tileGloss} pointerEvents="none" />
+                  <View style={styles.tileIconWrap}>
+                    <Text style={styles.tileIcon}>{t.icon}</Text>
+                  </View>
+                  <Text style={styles.tileLabel}>{t.label}</Text>
+                  <Text style={styles.tileSub} numberOfLines={2}>{t.sub(ctx)}</Text>
+                  {badge > 0 && (
+                    <View style={styles.badge}><Text style={styles.badgeText}>{badge}</Text></View>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            );
+          })}
         </View>
-        <View style={styles.statBox}>
-          <Text style={[styles.statValue, { color: '#bb8fce' }]}>💎 {gems}</Text>
-          <Text style={styles.statLabel}>Gems</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>🦸 {unlockedCount}</Text>
-          <Text style={styles.statLabel}>Heroes</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>✅ {completedLevels}/{LEVELS.length}</Text>
-          <Text style={styles.statLabel}>Cleared</Text>
-        </View>
-      </View>
 
-      <ScrollView style={styles.menu} contentContainerStyle={{ paddingBottom: 18 }}>
-        <MenuButton icon="⚔️" label="CAMPAIGN" sub="Story battles & boss fights" onPress={() => setScreen('levels')} color="#c0392b" />
-        <MenuButton icon="🏟️" label="ARENA" sub={`Endless gauntlet · Best wave ${arenaBestWave}`} onPress={() => setScreen('arena')} color="#e84393" />
-        <MenuButton icon="🦸" label="HEROES" sub={`${unlockedCount}/${Object.keys(heroes).length} unlocked · level up & ascend`} onPress={() => setScreen('collection')} color="#2980b9" />
-        <MenuButton icon="🎒" label="EQUIPMENT" sub="Weapons, armor, accessories" onPress={() => setScreen('equipment')} color="#27ae60" />
-        <MenuButton icon="🔨" label="FORGE" sub="Upgrade gear with shards" onPress={() => setScreen('forge')} color="#e67e22" />
-        <MenuButton icon="🏪" label="SHOP" sub="Buy gear with gold or gems" onPress={() => setScreen('shop')} color="#f1c40f" />
-        <MenuButton icon="📦" label="CHESTS" sub="Roll for random loot · 4 chest tiers" onPress={() => setScreen('chests')} color="#e84393" />
-        <MenuButton icon="🔮" label="SUMMON" sub="Pull random heroes with gems" onPress={() => setScreen('summon')} color="#bb8fce" />
-        <MenuButton icon="🏰" label="STRONGHOLD" sub="Permanent base upgrades · global bonuses" onPress={() => setScreen('stronghold')} color="#f39c12" />
-        <MenuButton icon="📖" label="CODEX" sub="Heroes, enemies, classes, abilities" onPress={() => setScreen('codex')} color="#16a085" />
-        <MenuButton icon="⚙️" label="SETTINGS" sub="Battle speed, particles, motion" onPress={() => setScreen('settings')} color="#7c83fd" />
-        <MenuButton icon="📅" label="DAILY" sub={`Streak 🔥 ${loginStreak} · ${claimableQuests} ready to claim`} onPress={() => setScreen('daily')} color="#e67e22" badge={claimableQuests} />
-        <MenuButton icon="🏆" label="ACHIEVEMENTS" sub="Claim milestone rewards" onPress={() => setScreen('achievements')} color="#bb8fce" badge={claimableAchievements} />
-        <MenuButton icon="📊" label="STATS" sub="Lifetime progress & top heroes" onPress={() => setScreen('stats')} color="#7c83fd" />
-
-        <View style={styles.statsCard}>
-          <Text style={styles.statsCardTitle}>LIFETIME STATS</Text>
-          <View style={styles.statRow}>
-            <Text style={styles.statKey}>Battles</Text>
-            <Text style={styles.statVal}>{totalBattles}</Text>
-          </View>
-          <View style={styles.statRow}>
-            <Text style={styles.statKey}>Victories</Text>
-            <Text style={styles.statVal}>{totalVictories} ({winRate}%)</Text>
-          </View>
-          <View style={styles.statRow}>
-            <Text style={styles.statKey}>Damage dealt</Text>
-            <Text style={styles.statVal}>{totalDamageDealt}</Text>
-          </View>
-          <View style={styles.statRow}>
-            <Text style={styles.statKey}>Total kills</Text>
-            <Text style={styles.statVal}>{totalKills}</Text>
-          </View>
-          <View style={styles.statRow}>
-            <Text style={styles.statKey}>Arena best</Text>
-            <Text style={styles.statVal}>Wave {arenaBestWave}</Text>
-          </View>
-        </View>
+        <Panel style={{ marginTop: spacing.lg }}>
+          <Text style={styles.statsTitle}>📜 LIFETIME RECORD</Text>
+          <StatRow k="Battles fought" v={`${totalBattles}`} />
+          <StatRow k="Victories" v={`${totalVictories}  (${winRate}%)`} />
+          <StatRow k="Damage dealt" v={`${totalDamageDealt}`} />
+          <StatRow k="Total kills" v={`${totalKills}`} />
+          <StatRow k="Arena best" v={`Wave ${arenaBestWave}`} last />
+        </Panel>
 
         <TouchableOpacity
-          style={styles.resetBtn}
-          onPress={() => {
-            Alert.alert('Reset save?', 'This will wipe all progress.', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Wipe', style: 'destructive', onPress: reset },
-            ]);
-          }}
+          style={styles.reset}
+          onPress={() => Alert.alert('Reset save?', 'This wipes all progress.', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Wipe', style: 'destructive', onPress: reset },
+          ])}
         >
           <Text style={styles.resetText}>Reset progress</Text>
         </TouchableOpacity>
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-function MenuButton({ icon, label, sub, onPress, color, badge }: {
-  icon: string; label: string; sub: string; onPress: () => void; color: string; badge?: number;
-}) {
+function StatRow({ k, v, last }: { k: string; v: string; last?: boolean }) {
   return (
-    <TouchableOpacity style={[styles.menuBtn, { borderLeftColor: color }]} onPress={onPress} activeOpacity={0.8}>
-      <Text style={styles.menuIcon}>{icon}</Text>
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.menuLabel, { color }]}>{label}</Text>
-        <Text style={styles.menuSub}>{sub}</Text>
-      </View>
-      {badge && badge > 0 ? (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{badge}</Text>
-        </View>
-      ) : null}
-      <Text style={styles.menuArrow}>›</Text>
-    </TouchableOpacity>
+    <View style={[styles.statRow, !last && styles.statRowBorder]}>
+      <Text style={styles.statKey}>{k}</Text>
+      <Text style={styles.statVal}>{v}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a14' },
-  header: { alignItems: 'center', paddingTop: 30, paddingBottom: 14 },
-  title: { fontSize: 30, fontWeight: '900', color: '#f1c40f', letterSpacing: 3 },
-  subtitle: { color: '#888', fontSize: 12, marginTop: 4, letterSpacing: 1 },
-  statsRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 8, marginBottom: 14 },
-  statBox: { flex: 1, backgroundColor: '#1e1e2e', borderRadius: 10, padding: 10, alignItems: 'center' },
-  statValue: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  statLabel: { color: '#666', fontSize: 10, marginTop: 2 },
-  menu: { flex: 1, paddingHorizontal: 12 },
-  menuBtn: {
-    backgroundColor: '#1e1e2e', borderRadius: 12, borderLeftWidth: 4,
-    padding: 14, flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 10,
+  header: { flexDirection: 'row', alignItems: 'center', paddingTop: 26, paddingHorizontal: 16 },
+  currencyWrap: { alignItems: 'center', paddingVertical: 12 },
+  scroll: { padding: spacing.md, paddingBottom: 30 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'space-between' },
+  tile: {
+    width: '31.5%', borderRadius: radius.lg, borderWidth: 2, borderColor: '#ffffff44',
+    overflow: 'hidden', ...shadow.card,
   },
-  menuIcon: { fontSize: 26 },
-  menuLabel: { fontSize: 15, fontWeight: '800', letterSpacing: 1 },
-  menuSub: { color: '#666', fontSize: 11, marginTop: 2 },
-  menuArrow: { color: '#444', fontSize: 22 },
-  badge: { backgroundColor: '#e74c3c', borderRadius: 12, minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  badgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
-  statsCard: { backgroundColor: '#1e1e2e', borderRadius: 12, padding: 14, marginTop: 6 },
-  statsCardTitle: { color: '#555', fontSize: 10, fontWeight: '800', letterSpacing: 2, marginBottom: 8 },
-  statRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
-  statKey: { color: '#777', fontSize: 12 },
-  statVal: { color: '#ddd', fontSize: 12, fontWeight: '600' },
-  resetBtn: { padding: 14, alignItems: 'center', marginTop: 10 },
-  resetText: { color: '#444', fontSize: 11 },
+  tileGrad: { padding: 10, alignItems: 'center', minHeight: 104, justifyContent: 'center' },
+  tileGloss: { position: 'absolute', top: 0, left: 0, right: 0, height: '42%', backgroundColor: '#ffffff2e' },
+  tileIconWrap: {
+    width: 42, height: 42, borderRadius: 21, backgroundColor: '#00000033',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 6, borderWidth: 1, borderColor: '#ffffff55',
+  },
+  tileIcon: { fontSize: 24 },
+  tileLabel: { color: '#fff', fontWeight: '900', fontSize: 12, letterSpacing: 0.5, textShadowColor: '#0007', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  tileSub: { color: '#ffffffcc', fontSize: 8.5, textAlign: 'center', marginTop: 2, fontWeight: '600' },
+  badge: {
+    position: 'absolute', top: 6, right: 6, backgroundColor: palette.red, borderRadius: 11,
+    minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5,
+    borderWidth: 2, borderColor: '#fff',
+  },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: '900' },
+  statsTitle: { color: palette.gold, fontSize: 11, fontWeight: '900', letterSpacing: 2, marginBottom: 8 },
+  statRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 7 },
+  statRowBorder: { borderBottomWidth: 1, borderBottomColor: '#ffffff14' },
+  statKey: { color: palette.textMute, fontSize: 12, fontWeight: '600' },
+  statVal: { color: palette.text, fontSize: 12, fontWeight: '800' },
+  reset: { padding: 16, alignItems: 'center', marginTop: 8 },
+  resetText: { color: palette.textDim, fontSize: 11 },
 });

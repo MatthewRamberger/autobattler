@@ -1,7 +1,9 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Equipment } from '../types';
-import { RARITY_COLORS, EQUIPMENT_SETS } from '../data/equipment';
+import { EQUIPMENT_SETS } from '../data/equipment';
+import { palette, radius, shadow, rarityGradient } from '../theme';
 
 interface Props {
   item: Equipment;
@@ -11,107 +13,64 @@ interface Props {
 }
 
 export default function EquipmentCard({ item, onPress, selected, equipped }: Props) {
-  const rarityColor = RARITY_COLORS[item.rarity];
+  const grad = rarityGradient[item.rarity] ?? rarityGradient.common;
   const bonusText = Object.entries(item.statBonus)
     .map(([k, v]) => {
       const isPct = k === 'critRate' || k === 'dodge' || k === 'critDamage';
       return isPct ? `+${Math.round((v as number) * 100)}% ${k}` : `+${v} ${k}`;
     })
     .join('  ');
-
   const set = item.setId ? EQUIPMENT_SETS[item.setId] : null;
 
   return (
     <TouchableOpacity
       onPress={onPress}
-      style={[styles.card, { borderColor: selected ? '#fff' : rarityColor }]}
-      activeOpacity={0.8}
+      activeOpacity={0.85}
+      style={[styles.card, { borderColor: selected ? palette.gold : grad[1] }, shadow.card]}
     >
-      <View style={[styles.iconBg, { backgroundColor: rarityColor + '22' }]}>
+      <LinearGradient colors={grad} style={styles.iconBg}>
         <Text style={styles.icon}>{item.icon}</Text>
         {item.level > 0 && (
-          <View style={styles.forgeBadge}>
-            <Text style={styles.forgeText}>+{item.level}</Text>
-          </View>
+          <View style={styles.forgeBadge}><Text style={styles.forgeText}>+{item.level}</Text></View>
         )}
-      </View>
+      </LinearGradient>
       <View style={styles.info}>
         <View style={styles.nameRow}>
-          <Text style={[styles.name, { color: rarityColor }]} numberOfLines={1}>
-            {item.name}
-            {item.level > 0 && ` +${item.level}`}
+          <Text style={[styles.name, { color: grad[0] }]} numberOfLines={1}>
+            {item.name}{item.level > 0 && ` +${item.level}`}
           </Text>
           {equipped && <Text style={styles.equippedBadge}>EQUIPPED</Text>}
         </View>
         <Text style={styles.bonus}>{bonusText}</Text>
         <View style={styles.metaRow}>
-          <Text style={styles.type}>
-            {item.type.toUpperCase()} · {item.rarity.toUpperCase()}
-          </Text>
+          <Text style={styles.type}>{item.type.toUpperCase()} · {item.rarity.toUpperCase()}</Text>
           {set && <Text style={styles.setText}>SET: {set.name}</Text>}
           {item.shards > 0 && <Text style={styles.shards}>◆ {item.shards}</Text>}
         </View>
       </View>
-      <View style={styles.ownedBadge}>
-        <Text style={styles.ownedText}>×{item.owned}</Text>
-      </View>
+      <View style={styles.ownedBadge}><Text style={styles.ownedText}>×{item.owned}</Text></View>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#1e1e2e',
-    borderRadius: 12,
-    borderWidth: 2,
-    padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
+    backgroundColor: palette.panel, borderRadius: radius.md, borderWidth: 2,
+    padding: 10, flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 10,
   },
-  iconBg: {
-    width: 46,
-    height: 46,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-    position: 'relative',
-  },
+  iconBg: { width: 46, height: 46, borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#ffffff44' },
   icon: { fontSize: 24 },
-  forgeBadge: {
-    position: 'absolute',
-    bottom: -3, right: -3,
-    backgroundColor: '#e67e22',
-    borderRadius: 6,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-  },
+  forgeBadge: { position: 'absolute', bottom: -4, right: -4, backgroundColor: palette.goldDeep, borderRadius: 6, paddingHorizontal: 4, paddingVertical: 1, borderWidth: 1, borderColor: '#fff' },
   forgeText: { color: '#fff', fontWeight: '900', fontSize: 9 },
   info: { flex: 1 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  name: { fontSize: 13, fontWeight: '700', flexShrink: 1 },
-  equippedBadge: {
-    backgroundColor: '#27ae60',
-    color: '#fff',
-    fontSize: 8,
-    fontWeight: '700',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  bonus: { color: '#7ec8e3', fontSize: 11, marginTop: 2 },
+  name: { fontSize: 13, fontWeight: '800', flexShrink: 1 },
+  equippedBadge: { backgroundColor: palette.greenDeep, color: '#fff', fontSize: 8, fontWeight: '900', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 },
+  bonus: { color: '#8fd0ff', fontSize: 11, marginTop: 2, fontWeight: '600' },
   metaRow: { flexDirection: 'row', gap: 8, marginTop: 2 },
-  type: { color: '#666', fontSize: 9 },
-  setText: { color: '#f1c40f', fontSize: 9, fontWeight: '700' },
-  shards: { color: '#bb8fce', fontSize: 9, fontWeight: '700' },
-  ownedBadge: {
-    backgroundColor: '#2a2a3e',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    minWidth: 32,
-    alignItems: 'center',
-  },
-  ownedText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  type: { color: palette.textDim, fontSize: 9, fontWeight: '700' },
+  setText: { color: palette.gold, fontSize: 9, fontWeight: '800' },
+  shards: { color: palette.purple, fontSize: 9, fontWeight: '800' },
+  ownedBadge: { backgroundColor: palette.panelDeep, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, minWidth: 32, alignItems: 'center', borderWidth: 1, borderColor: '#0006' },
+  ownedText: { color: palette.text, fontWeight: '800', fontSize: 13 },
 });

@@ -1,174 +1,140 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useGameStore } from '../store/gameStore';
-import { LEVELS, DIFFICULTY_COLORS } from '../data/levels';
+import { LEVELS } from '../data/levels';
 import HeroPortrait from '../components/HeroPortrait';
+import {
+  Screen, TopBar, Panel, GButton, Tag, palette, radius, spacing, shadow,
+} from '../components/ui';
+import { difficultyGradient } from '../theme';
 
 export default function LevelsScreen() {
   const { setScreen, levelProgress, setCurrentLevel, autoResolveLevel, placedHeroes, autoPlace, quickFight } = useGameStore();
   const [grinding, setGrinding] = useState<number | null>(null);
-
-  function handleSelectLevel(levelId: number) {
-    setCurrentLevel(levelId);
-    setScreen('battle-prep');
-  }
 
   async function handleAutoResolve(levelId: number, times: number) {
     if (Object.keys(placedHeroes).length === 0) autoPlace();
     setGrinding(levelId);
     const r = await autoResolveLevel(levelId, times);
     setGrinding(null);
-    Alert.alert(
-      `Auto-resolve ×${times}`,
-      `Wins: ${r.wins}\nLosses: ${r.losses}\nGold: +${r.goldGained}\nEXP: +${r.expGained}`,
-    );
+    Alert.alert(`Auto-resolve ×${times}`, `Wins: ${r.wins}\nLosses: ${r.losses}\nGold: +${r.goldGained}\nXP: +${r.expGained}`);
   }
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => setScreen('home')} style={styles.backBtn}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>CAMPAIGN</Text>
-        <Text style={styles.progress}>
-          {Object.values(levelProgress).filter((p) => p.completed).length}/{LEVELS.length}
-        </Text>
-      </View>
+  const cleared = Object.values(levelProgress).filter((p) => p.completed).length;
 
-      <ScrollView contentContainerStyle={styles.list}>
+  return (
+    <Screen>
+      <TopBar
+        title="CAMPAIGN"
+        onBack={() => setScreen('home')}
+        right={<View style={styles.prog}><Text style={styles.progText}>{cleared}/{LEVELS.length}</Text></View>}
+      />
+      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
         {LEVELS.map((level, idx) => {
           const progress = levelProgress[level.id];
           const isCompleted = !!progress?.completed;
           const prevCompleted = idx === 0 || !!levelProgress[LEVELS[idx - 1].id]?.completed;
           const isLocked = !prevCompleted;
-          const diffColor = DIFFICULTY_COLORS[level.difficulty];
+          const grad = difficultyGradient[level.difficulty] ?? difficultyGradient.easy;
 
           return (
-            <TouchableOpacity
-              key={level.id}
-              style={[
-                styles.levelCard,
-                { borderColor: isCompleted ? diffColor : isLocked ? '#222' : diffColor + '88' },
-                isLocked && styles.locked,
-              ]}
-              onPress={() => !isLocked && handleSelectLevel(level.id)}
-              activeOpacity={isLocked ? 1 : 0.8}
-            >
-              <View style={styles.levelNumCol}>
-                <View style={[styles.levelNumBg, { backgroundColor: isLocked ? '#222' : diffColor }]}>
-                  <Text style={styles.levelNum}>{level.id}</Text>
-                </View>
-                {level.bossMechanic && !isLocked && (
-                  <Text style={styles.bossLabel}>{level.bossMechanic.toUpperCase()}</Text>
-                )}
+            <View key={level.id} style={styles.row}>
+              <View style={styles.nodeCol}>
+                <LinearGradient
+                  colors={isLocked ? (['#3a3550', '#272338'] as const) : grad}
+                  style={styles.node}
+                >
+                  <Text style={styles.nodeNum}>{isLocked ? '🔒' : level.id}</Text>
+                </LinearGradient>
+                {idx < LEVELS.length - 1 && <View style={[styles.connector, isCompleted && styles.connectorOn]} />}
               </View>
 
-              <View style={styles.levelInfo}>
-                <View style={styles.levelNameRow}>
-                  <Text style={[styles.levelName, isLocked && styles.lockedText]} numberOfLines={1}>{level.name}</Text>
-                  <View style={[styles.diffBadge, { backgroundColor: diffColor + (isLocked ? '44' : '') }]}>
-                    <Text style={styles.diffText}>{level.difficulty.toUpperCase()}</Text>
-                  </View>
-                </View>
-                <Text style={[styles.levelDesc, isLocked && styles.lockedText]} numberOfLines={2}>
-                  {isLocked ? '🔒 Complete previous level to unlock' : level.description}
-                </Text>
-                {!isLocked && (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.enemyRow}>
-                    {level.enemies.map((e, i) => (
-                      <View key={i} style={{ marginRight: 4 }}>
-                        <HeroPortrait
-                          size={28}
-                          heroClass={e.heroClass}
-                          rarity="common"
-                          icon={e.icon}
-                          element={e.element ?? 'physical'}
-                          seed={e.name.charCodeAt(0) + i}
-                          isEnemy
-                          showFrame={false}
-                          stars={e.stars}
-                        />
+              <TouchableOpacity
+                activeOpacity={isLocked ? 1 : 0.85}
+                onPress={() => { if (!isLocked) { setCurrentLevel(level.id); setScreen('battle-prep'); } }}
+                style={{ flex: 1 }}
+              >
+                <Panel padded={false} style={[styles.card, isLocked && { opacity: 0.55 }]}>
+                  <View style={styles.cardBody}>
+                    <View style={styles.cardTop}>
+                      <Text style={styles.levelName} numberOfLines={1}>{level.name}</Text>
+                      <Tag label={level.difficulty.toUpperCase()} colors={grad} small />
+                    </View>
+                    <Text style={styles.levelDesc} numberOfLines={2}>
+                      {isLocked ? 'Complete the previous battle to unlock.' : level.description}
+                    </Text>
+
+                    {!isLocked && (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
+                        {level.enemies.map((e, i) => (
+                          <View key={i} style={{ marginRight: 5 }}>
+                            <HeroPortrait
+                              size={30} heroClass={e.heroClass} rarity="common" icon={e.icon}
+                              element={e.element ?? 'physical'} seed={e.name.charCodeAt(0) + i}
+                              isEnemy showFrame={false} stars={e.stars}
+                            />
+                          </View>
+                        ))}
+                      </ScrollView>
+                    )}
+
+                    <View style={styles.rewardRow}>
+                      <Text style={styles.reward}>🪙 {level.rewards.gold}</Text>
+                      <Text style={styles.reward}>⭐ {level.rewards.experience}</Text>
+                      {!!level.recommendedPower && <Text style={styles.reward}>⚡ {level.recommendedPower}</Text>}
+                      {level.bossMechanic && !isLocked && (
+                        <Text style={styles.boss}>👑 {level.bossMechanic.toUpperCase()}</Text>
+                      )}
+                    </View>
+
+                    {isCompleted && (
+                      <View style={styles.actions}>
+                        <Text style={styles.stars}>⭐⭐⭐</Text>
+                        <GButton small label={grinding === level.id ? '…' : '×5'} variant="purple"
+                          onPress={() => handleAutoResolve(level.id, 5)} />
+                        <GButton small label="⚡ Quick" variant="green"
+                          onPress={() => quickFight(level.id)} />
                       </View>
-                    ))}
-                  </ScrollView>
-                )}
-                <View style={styles.rewardsRow}>
-                  <Text style={styles.rewardItem}>💰 {level.rewards.gold}</Text>
-                  <Text style={styles.rewardItem}>⭐ {level.rewards.experience}</Text>
-                  {level.recommendedPower && (
-                    <Text style={styles.rewardItem}>⚡ {level.recommendedPower}</Text>
-                  )}
-                </View>
-              </View>
-
-              <View style={styles.statusCol}>
-                {isCompleted ? (
-                  <>
-                    <Text style={styles.starsText}>⭐⭐⭐</Text>
-                    <TouchableOpacity
-                      onPress={(e) => { e.stopPropagation?.(); handleAutoResolve(level.id, 5); }}
-                      style={styles.autoBtn}
-                      disabled={grinding === level.id}
-                    >
-                      <Text style={styles.autoText}>
-                        {grinding === level.id ? '…' : '×5'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={(e) => { e.stopPropagation?.(); quickFight(level.id); }}
-                      style={styles.quickBtn}
-                    >
-                      <Text style={styles.quickText}>⚡</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : isLocked ? (
-                  <Text style={styles.lockIcon}>🔒</Text>
-                ) : (
-                  <Text style={styles.playBtn}>▶</Text>
-                )}
-              </View>
-            </TouchableOpacity>
+                    )}
+                    {!isCompleted && !isLocked && (
+                      <View style={styles.actions}>
+                        <GButton small label="BATTLE ▶" variant="gold"
+                          onPress={() => { setCurrentLevel(level.id); setScreen('battle-prep'); }} />
+                      </View>
+                    )}
+                  </View>
+                </Panel>
+              </TouchableOpacity>
+            </View>
           );
         })}
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a14' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderBottomWidth: 1, borderBottomColor: '#1e1e2e' },
-  backBtn: { paddingVertical: 4, paddingRight: 12 },
-  backText: { color: '#888', fontSize: 13 },
-  title: { color: '#c0392b', fontSize: 16, fontWeight: '800', letterSpacing: 2 },
-  progress: { color: '#888', fontSize: 13 },
-  list: { padding: 10 },
-  levelCard: {
-    backgroundColor: '#1e1e2e', borderRadius: 12, borderWidth: 2,
-    padding: 10, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10,
+  prog: { backgroundColor: palette.panelDeep, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: palette.goldDark },
+  progText: { color: palette.gold, fontWeight: '900', fontSize: 12 },
+  list: { padding: spacing.md, paddingBottom: 30 },
+  row: { flexDirection: 'row', gap: 10 },
+  nodeCol: { alignItems: 'center', width: 44 },
+  node: {
+    width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 3, borderColor: '#ffffff55', ...shadow.button,
   },
-  locked: { opacity: 0.5 },
-  levelNumCol: { alignItems: 'center' },
-  levelNumBg: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
-  levelNum: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  bossLabel: { color: '#bb8fce', fontSize: 8, fontWeight: '700', marginTop: 2 },
-  levelInfo: { flex: 1 },
-  levelNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  levelName: { color: '#fff', fontWeight: '700', fontSize: 14, flex: 1 },
-  lockedText: { color: '#555' },
-  diffBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
-  diffText: { color: '#fff', fontSize: 8, fontWeight: '800' },
-  levelDesc: { color: '#777', fontSize: 11, lineHeight: 14, marginBottom: 4 },
-  enemyRow: { marginVertical: 4, flexDirection: 'row' },
-  rewardsRow: { flexDirection: 'row', gap: 10, marginTop: 2 },
-  rewardItem: { color: '#555', fontSize: 10 },
-  statusCol: { alignItems: 'center', minWidth: 42 },
-  starsText: { fontSize: 10 },
-  lockIcon: { fontSize: 18 },
-  playBtn: { color: '#27ae60', fontSize: 22, fontWeight: '700' },
-  autoBtn: { marginTop: 4, backgroundColor: '#e67e2233', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: '#e67e22' },
-  autoText: { color: '#e67e22', fontSize: 10, fontWeight: '800' },
-  quickBtn: { marginTop: 4, backgroundColor: '#27ae6033', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: '#27ae60' },
-  quickText: { color: '#27ae60', fontSize: 12, fontWeight: '800' },
+  nodeNum: { color: '#fff', fontWeight: '900', fontSize: 16, textShadowColor: '#0007', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  connector: { width: 4, flex: 1, backgroundColor: '#ffffff1a', marginVertical: 2, borderRadius: 2, minHeight: 26 },
+  connectorOn: { backgroundColor: palette.gold + 'aa' },
+  card: { marginBottom: spacing.md },
+  cardBody: { padding: spacing.md },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  levelName: { color: '#fff', fontWeight: '900', fontSize: 15, flex: 1 },
+  levelDesc: { color: palette.textMute, fontSize: 11, lineHeight: 15 },
+  rewardRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 4, alignItems: 'center' },
+  reward: { color: palette.textSoft, fontSize: 11, fontWeight: '700' },
+  boss: { color: palette.purple, fontSize: 10, fontWeight: '900' },
+  actions: { flexDirection: 'row', gap: 8, marginTop: 10, alignItems: 'center' },
+  stars: { fontSize: 12, marginRight: 'auto' },
 });

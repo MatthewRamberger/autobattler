@@ -1,5 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { Bar } from './ui';
+import { palette } from '../theme';
 
 interface Props {
   label: string;
@@ -9,13 +11,10 @@ interface Props {
 }
 
 export default function StatBar({ label, value, max, color }: Props) {
-  const pct = Math.min(1, value / max);
   return (
     <View style={styles.row}>
       <Text style={styles.label}>{label}</Text>
-      <View style={styles.track}>
-        <View style={[styles.fill, { width: `${pct * 100}%`, backgroundColor: color }]} />
-      </View>
+      <Bar pct={value / max} colors={[color, color]} height={9} style={styles.track} />
       <Text style={styles.value}>{value}</Text>
     </View>
   );
@@ -23,8 +22,7 @@ export default function StatBar({ label, value, max, color }: Props) {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', marginVertical: 3 },
-  label: { width: 28, color: '#aaa', fontSize: 11, fontWeight: '600' },
-  track: { flex: 1, height: 8, backgroundColor: '#333', borderRadius: 4, overflow: 'hidden', marginHorizontal: 8 },
-  fill: { height: '100%', borderRadius: 4 },
-  value: { width: 36, color: '#fff', fontSize: 11, textAlign: 'right' },
+  label: { width: 30, color: palette.textMute, fontSize: 11, fontWeight: '700' },
+  track: { flex: 1, marginHorizontal: 8 },
+  value: { width: 38, color: palette.text, fontSize: 11, textAlign: 'right', fontWeight: '700' },
 });

@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import {
-  View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert,
-} from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useGameStore, getHeroEffectiveStats, computeTeamSynergies, generateArenaWave } from '../store/gameStore';
 import { LEVELS } from '../data/levels';
 import { GridPosition } from '../types';
-import { RARITY_COLORS } from '../data/equipment';
-import { CLASS_COLORS } from '../data/heroes';
 import HeroPortrait from '../components/HeroPortrait';
+import {
+  Screen, TopBar, Panel, GButton, palette, gradients, radius, spacing,
+} from '../components/ui';
 
 const GRID_COLS = 10;
 const GRID_ROWS = 3;
@@ -32,183 +32,121 @@ export default function BattlePrepScreen() {
   const unlockedHeroes = Object.values(heroes).filter((h) => h.unlocked);
   const placedIds = new Set(Object.keys(placedHeroes));
   const synergies = computeTeamSynergies(Object.keys(placedHeroes), store);
-
   const enemyPreview = level ? level.enemies : isArena ? generateArenaWave(arenaWave) : [];
-  const teamPower = Object.keys(placedHeroes).reduce((s, id) => {
-    const stats = getHeroEffectiveStats(id, store);
-    return s + (stats?.power ?? 0);
-  }, 0);
+  const teamPower = Object.keys(placedHeroes).reduce((s, id) => s + (getHeroEffectiveStats(id, store)?.power ?? 0), 0);
 
-  function handleCellPress(col: number, row: number) {
+  function handleCell(col: number, row: number) {
     if (col > PLAYER_MAX_COL) return;
-    const pos: GridPosition = { col, row };
     const existing = Object.entries(placedHeroes).find(([, p]) => p.col === col && p.row === row);
     if (existing) {
-      if (selectedHeroId === existing[0]) {
-        removeHeroFromGrid(existing[0]);
-        setSelectedHeroId(null);
-      } else {
-        setSelectedHeroId(existing[0]);
-      }
+      if (selectedHeroId === existing[0]) { removeHeroFromGrid(existing[0]); setSelectedHeroId(null); }
+      else setSelectedHeroId(existing[0]);
       return;
     }
-    if (selectedHeroId) {
-      placeHero(selectedHeroId, pos);
-      setSelectedHeroId(null);
-    }
+    if (selectedHeroId) { placeHero(selectedHeroId, { col, row }); setSelectedHeroId(null); }
   }
 
   function startBattle() {
     if (Object.keys(placedHeroes).length === 0) {
-      Alert.alert('No heroes placed!', 'Place at least one hero on the left side.');
+      Alert.alert('No heroes placed', 'Tap a hero below, then tap a blue cell.');
       return;
     }
     setScreen('battle');
   }
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => { clearPlacements(); setScreen(isArena ? 'arena' : 'levels'); }} style={styles.backBtn}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.title} numberOfLines={1}>
-            {isArena ? `Arena Wave ${arenaWave}` : level?.name ?? ''}
-          </Text>
-          <Text style={styles.subtitle}>
-            Power {teamPower}{level?.recommendedPower ? ` / rec ${level.recommendedPower}` : ''}
-          </Text>
-        </View>
-        <TouchableOpacity style={styles.battleBtn} onPress={startBattle}>
-          <Text style={styles.battleBtnText}>FIGHT ▶</Text>
-        </TouchableOpacity>
-      </View>
+  const recommended = level?.recommendedPower ?? 0;
+  const powerOk = !recommended || teamPower >= recommended;
 
-      <View style={styles.toolbarRow}>
-        <TouchableOpacity style={styles.toolBtn} onPress={autoPlace}>
-          <Text style={styles.toolBtnText}>✨ Auto</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.toolBtn} onPress={() => clearPlacements()}>
-          <Text style={styles.toolBtnText}>🗑 Clear</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.toolBtn} onPress={() => setShowLoadouts((s) => !s)}>
-          <Text style={styles.toolBtnText}>📁 Loadouts</Text>
-        </TouchableOpacity>
+  return (
+    <Screen>
+      <TopBar
+        title={isArena ? `ARENA ${arenaWave}` : (level?.name ?? 'PREP')}
+        titleSize={15}
+        onBack={() => { clearPlacements(); setScreen(isArena ? 'arena' : 'levels'); }}
+        right={
+          <View style={styles.powerPill}>
+            <Text style={[styles.powerText, { color: powerOk ? palette.green : palette.red }]}>⚡{teamPower}</Text>
+            {!!recommended && <Text style={styles.recText}>/{recommended}</Text>}
+          </View>
+        }
+      />
+
+      <View style={styles.toolbar}>
+        <GButton small label="✨ Auto" variant="blue" onPress={autoPlace} />
+        <GButton small label="🗑 Clear" variant="purple" onPress={() => clearPlacements()} />
+        <GButton small label="📁 Teams" variant="purple" onPress={() => setShowLoadouts((s) => !s)} />
         {!isArena && level && (
-          <TouchableOpacity
-            style={styles.toolBtn}
-            disabled={predicting || Object.keys(placedHeroes).length === 0}
-            onPress={async () => {
-              setPredicting(true);
-              const r = await predictBattle(level.id, 8);
-              setPrediction(r);
-              setPredicting(false);
-            }}
-          >
-            <Text style={styles.toolBtnText}>{predicting ? '...' : '🔮 Predict'}</Text>
-          </TouchableOpacity>
+          <GButton
+            small label={predicting ? '…' : '🔮 Predict'} variant="purple"
+            onPress={async () => { setPredicting(true); const r = await predictBattle(level.id, 8); setPrediction(r); setPredicting(false); }}
+          />
         )}
-        <View style={styles.headerCounts}>
-          <Text style={styles.countText}>👥 {Object.keys(placedHeroes).length}/5</Text>
-        </View>
       </View>
 
       {prediction && (
-        <View style={styles.predictionRow}>
-          <Text style={styles.predictionText}>
-            Predicted win rate: {Math.round(prediction.winRate * 100)}% · avg {prediction.avgTicks} ticks
+        <View style={styles.predict}>
+          <Text style={styles.predictText}>
+            🔮 Predicted win {Math.round(prediction.winRate * 100)}% · ~{prediction.avgTicks} ticks
           </Text>
         </View>
       )}
 
       {showLoadouts && (
-        <View style={styles.loadoutsRow}>
+        <View style={styles.loadouts}>
           {([1, 2, 3] as const).map((slot) => {
             const key = `slot_${slot}`;
             const lo = loadouts[key];
             return (
-              <View key={key} style={styles.loadoutSlot}>
-                <Text style={styles.loadoutLabel}>{lo?.name ?? `Loadout ${slot}`}</Text>
-                <View style={styles.loadoutBtns}>
-                  <TouchableOpacity
-                    style={styles.loSmall}
-                    onPress={() => saveLoadout(key, `Team ${slot}`)}
-                  >
-                    <Text style={styles.loSmallText}>Save</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.loSmall, { backgroundColor: '#27ae60' }]}
-                    disabled={!lo}
-                    onPress={() => applyLoadout(key)}
-                  >
-                    <Text style={styles.loSmallText}>Load</Text>
-                  </TouchableOpacity>
-                  {lo && (
-                    <TouchableOpacity
-                      style={[styles.loSmall, { backgroundColor: '#c0392b' }]}
-                      onPress={() => deleteLoadout(key)}
-                    >
-                      <Text style={styles.loSmallText}>X</Text>
-                    </TouchableOpacity>
-                  )}
+              <Panel key={key} style={{ flex: 1 }}>
+                <Text style={styles.loName} numberOfLines={1}>{lo?.name ?? `Team ${slot}`}</Text>
+                <View style={{ gap: 4, marginTop: 4 }}>
+                  <GButton small label="Save" variant="blue" onPress={() => saveLoadout(key, `Team ${slot}`)} />
+                  <GButton small label="Load" variant="green" disabled={!lo} onPress={() => applyLoadout(key)} />
+                  {lo && <GButton small label="Delete" variant="red" onPress={() => deleteLoadout(key)} />}
                 </View>
-              </View>
+              </Panel>
             );
           })}
         </View>
       )}
 
-      <View style={styles.gridContainer}>
-        <View style={styles.grid}>
+      <View style={styles.arenaWrap}>
+        <View style={styles.arena}>
           {Array.from({ length: GRID_ROWS }, (_, row) => (
-            <View key={row} style={styles.gridRow}>
+            <View key={row} style={{ flexDirection: 'row' }}>
               {Array.from({ length: GRID_COLS }, (_, col) => {
-                const isPlayerSide = col <= PLAYER_MAX_COL;
+                const playerSide = col <= PLAYER_MAX_COL;
                 const placedHeroId = Object.entries(placedHeroes).find(([, p]) => p.col === col && p.row === row)?.[0];
-                const enemyHere = level?.enemies.find((e) => e.position.col === col && e.position.row === row);
+                const enemyHere = level?.enemies.find((e) => e.position.col === col && e.position.row === row)
+                  ?? (isArena ? enemyPreview.find((e) => e.position.col === col && e.position.row === row) : undefined);
                 const placedHero = placedHeroId ? heroes[placedHeroId] : null;
-                const isSelected = placedHeroId === selectedHeroId;
-
+                const selected = placedHeroId === selectedHeroId;
                 return (
                   <TouchableOpacity
-                    key={col}
-                    style={[
-                      styles.cell,
-                      isPlayerSide ? styles.playerCell : styles.enemyCell,
-                      isSelected && styles.selectedCell,
-                      col === PLAYER_MAX_COL && styles.dividerRight,
-                      col === PLAYER_MAX_COL + 1 && styles.dividerLeft,
-                    ]}
-                    onPress={() => handleCellPress(col, row)}
-                    activeOpacity={isPlayerSide ? 0.7 : 1}
+                    key={col} activeOpacity={playerSide ? 0.7 : 1}
+                    onPress={() => handleCell(col, row)}
+                    style={{ flex: 1, aspectRatio: 1 }}
                   >
-                    {placedHero ? (
-                      <HeroPortrait
-                        size={36}
-                        heroClass={placedHero.heroClass}
-                        rarity={placedHero.rarity}
-                        icon={placedHero.icon}
-                        element={placedHero.baseStats.element}
-                        seed={placedHero.portraitSeed}
-                        stars={placedHero.stars}
-                        showFrame={false}
-                      />
-                    ) : enemyHere ? (
-                      <HeroPortrait
-                        size={36}
-                        heroClass={enemyHere.heroClass}
-                        rarity={'common'}
-                        icon={enemyHere.icon}
-                        element={enemyHere.element ?? 'physical'}
-                        seed={(enemyHere.name.charCodeAt(0) * 13) + enemyHere.position.col}
-                        stars={enemyHere.stars}
-                        isEnemy
-                        showFrame={false}
-                      />
-                    ) : isPlayerSide ? (
-                      <Text style={styles.emptyCell}>+</Text>
-                    ) : null}
+                    <LinearGradient
+                      colors={playerSide ? gradients.arenaPlayer : gradients.arenaEnemy}
+                      style={[
+                        styles.cell,
+                        selected && styles.cellSel,
+                        col === PLAYER_MAX_COL && styles.midR,
+                      ]}
+                    >
+                      {placedHero ? (
+                        <HeroPortrait size={34} heroClass={placedHero.heroClass} rarity={placedHero.rarity}
+                          icon={placedHero.icon} element={placedHero.baseStats.element} seed={placedHero.portraitSeed}
+                          stars={placedHero.stars} showFrame={false} />
+                      ) : enemyHere ? (
+                        <HeroPortrait size={34} heroClass={enemyHere.heroClass} rarity="common" icon={enemyHere.icon}
+                          element={enemyHere.element ?? 'physical'} seed={(enemyHere.name.charCodeAt(0) * 13) + enemyHere.position.col}
+                          stars={enemyHere.stars} isEnemy showFrame={false} />
+                      ) : playerSide ? (
+                        <Text style={styles.plus}>＋</Text>
+                      ) : null}
+                    </LinearGradient>
                   </TouchableOpacity>
                 );
               })}
@@ -217,145 +155,85 @@ export default function BattlePrepScreen() {
         </View>
       </View>
 
-      {/* Synergies */}
       {synergies.length > 0 && (
-        <View style={styles.synergyBar}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 10, gap: 6 }}>
-            {synergies.map((s) => (
-              <View key={s.id} style={[
-                styles.synergyChip,
-                s.active ? styles.synergyActive : styles.synergyInactive,
-              ]}>
-                <Text style={[styles.synergyName, !s.active && { color: '#666' }]}>{s.name}</Text>
-                <Text style={[styles.synergyCount, !s.active && { color: '#555' }]}>{s.count}/{s.threshold}</Text>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.synergies}>
+          {synergies.map((s) => (
+            <View key={s.id} style={[styles.synChip, s.active ? styles.synOn : styles.synOff]}>
+              <Text style={[styles.synName, !s.active && { color: palette.textDim }]}>{s.name}</Text>
+              <Text style={[styles.synCount, !s.active && { color: palette.textDim }]}>{s.count}/{s.threshold}</Text>
+            </View>
+          ))}
+        </ScrollView>
       )}
 
-      {/* Hero bench */}
-      <View style={styles.bench}>
-        <Text style={styles.benchTitle}>HEROES — tap to select, then tap a cell</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.benchList}>
+      <View style={styles.benchWrap}>
+        <Text style={styles.benchTitle}>YOUR HEROES — tap, then tap a blue cell</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 10, gap: 8 }}>
           {unlockedHeroes.map((hero) => {
-            const isSelected = hero.id === selectedHeroId;
-            const isPlaced = placedIds.has(hero.id);
+            const sel = hero.id === selectedHeroId;
+            const placed = placedIds.has(hero.id);
             const stats = getHeroEffectiveStats(hero.id, store);
             return (
-              <TouchableOpacity
-                key={hero.id}
-                style={[styles.benchHero, isSelected && styles.benchHeroSelected, isPlaced && styles.benchHeroPlaced]}
-                onPress={() => setSelectedHeroId(hero.id === selectedHeroId ? null : hero.id)}
-                activeOpacity={0.8}
+              <TouchableOpacity key={hero.id} activeOpacity={0.85}
+                onPress={() => setSelectedHeroId(sel ? null : hero.id)}
+                style={[styles.benchHero, sel && styles.benchSel, placed && { opacity: 0.45 }]}
               >
-                <HeroPortrait
-                  size={56}
-                  heroClass={hero.heroClass}
-                  rarity={hero.rarity}
-                  icon={hero.icon}
-                  element={hero.baseStats.element}
-                  seed={hero.portraitSeed}
-                  level={hero.level}
-                  stars={hero.stars}
-                  selected={isSelected}
-                />
+                <HeroPortrait size={54} heroClass={hero.heroClass} rarity={hero.rarity} icon={hero.icon}
+                  element={hero.baseStats.element} seed={hero.portraitSeed} level={hero.level} stars={hero.stars} selected={sel} />
                 <Text style={styles.benchName} numberOfLines={1}>{hero.name}</Text>
                 {stats && <Text style={styles.benchPower}>⚡{stats.power}</Text>}
-                {isPlaced && <View style={styles.placedBadge}><Text style={styles.placedBadgeText}>ON GRID</Text></View>}
               </TouchableOpacity>
             );
           })}
         </ScrollView>
       </View>
 
-      {/* Enemy preview */}
-      <View style={styles.enemyPreview}>
-        <Text style={styles.enemyPreviewTitle}>ENEMIES ({enemyPreview.length})</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {enemyPreview.map((e, idx) => (
-            <View key={idx} style={styles.enemyChip}>
-              <HeroPortrait
-                size={44}
-                heroClass={e.heroClass}
-                rarity={'common'}
-                icon={e.icon}
-                element={e.element ?? 'physical'}
-                seed={e.name.charCodeAt(0) + idx}
-                isEnemy
-                showFrame
-                level={e.level}
-                stars={e.stars}
-              />
-              <Text style={styles.enemyChipName} numberOfLines={1}>{e.name}</Text>
-            </View>
-          ))}
-        </ScrollView>
+      <View style={styles.footer}>
+        <View style={styles.enemyMini}>
+          <Text style={styles.enemyMiniTitle}>ENEMIES · {enemyPreview.length}</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {enemyPreview.map((e, i) => (
+              <View key={i} style={{ marginRight: 4 }}>
+                <HeroPortrait size={30} heroClass={e.heroClass} rarity="common" icon={e.icon}
+                  element={e.element ?? 'physical'} seed={e.name.charCodeAt(0) + i} isEnemy showFrame={false} stars={e.stars} />
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+        <GButton label="FIGHT ▶" variant="red" onPress={startBattle} style={{ minWidth: 130 }} />
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a14' },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e2e',
-  },
-  backBtn: { paddingVertical: 4, paddingRight: 8 },
-  backText: { color: '#888', fontSize: 12 },
-  headerCenter: { flex: 1, alignItems: 'center' },
-  title: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  subtitle: { color: '#666', fontSize: 10, marginTop: 1 },
-  battleBtn: { backgroundColor: '#c0392b', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
-  battleBtnText: { color: '#fff', fontWeight: '800', fontSize: 12 },
-  toolbarRow: { flexDirection: 'row', paddingHorizontal: 10, paddingVertical: 6, gap: 6 },
-  toolBtn: { backgroundColor: '#1e1e2e', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: '#333' },
-  toolBtnText: { color: '#ccc', fontSize: 11 },
-  predictionRow: { backgroundColor: '#2a2a4e', paddingHorizontal: 10, paddingVertical: 6 },
-  predictionText: { color: '#7c83fd', fontSize: 12, fontWeight: '700', textAlign: 'center' },
-  loadoutsRow: { flexDirection: 'row', padding: 6, gap: 4 },
-  loadoutSlot: { flex: 1, backgroundColor: '#1e1e2e', borderRadius: 6, padding: 4, borderWidth: 1, borderColor: '#333' },
-  loadoutLabel: { color: '#ccc', fontSize: 10, textAlign: 'center', marginBottom: 4 },
-  loadoutBtns: { flexDirection: 'row', gap: 2 },
-  loSmall: { flex: 1, backgroundColor: '#3498db', borderRadius: 4, paddingVertical: 4, alignItems: 'center' },
-  loSmallText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-  headerCounts: { flex: 1, alignItems: 'flex-end' },
-  countText: { color: '#666', fontSize: 11 },
-  gridContainer: { paddingHorizontal: 4 },
-  grid: {},
-  gridRow: { flexDirection: 'row' },
-  cell: {
-    flex: 1, aspectRatio: 1, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 0.5, borderColor: '#1e1e2e',
-  },
-  playerCell: { backgroundColor: '#0d1a0d' },
-  enemyCell: { backgroundColor: '#1a0d0d' },
-  selectedCell: { backgroundColor: '#1a2a1a', borderColor: '#27ae60', borderWidth: 2 },
-  dividerRight: { borderRightWidth: 2, borderRightColor: '#333' },
-  dividerLeft: { borderLeftWidth: 2, borderLeftColor: '#333' },
-  emptyCell: { color: '#1e1e2e', fontSize: 16 },
-  synergyBar: { paddingVertical: 4, borderTopWidth: 1, borderTopColor: '#1e1e2e' },
-  synergyChip: { borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, alignItems: 'center' },
-  synergyActive: { backgroundColor: '#27ae6033', borderWidth: 1, borderColor: '#27ae60' },
-  synergyInactive: { backgroundColor: '#1e1e2e', borderWidth: 1, borderColor: '#333' },
-  synergyName: { color: '#27ae60', fontSize: 10, fontWeight: '700' },
-  synergyCount: { color: '#27ae60', fontSize: 9 },
-  bench: { borderTopWidth: 1, borderTopColor: '#1e1e2e', paddingTop: 6 },
-  benchTitle: { color: '#555', fontSize: 9, paddingHorizontal: 10, marginBottom: 4, letterSpacing: 0.5 },
-  benchList: { paddingHorizontal: 8, gap: 6 },
-  benchHero: {
-    backgroundColor: '#1e1e2e', borderRadius: 8, padding: 6, alignItems: 'center',
-    width: 70, borderWidth: 1, borderColor: '#2a2a2a',
-  },
-  benchHeroSelected: { borderColor: '#27ae60', backgroundColor: '#0d2a0d', borderWidth: 2 },
-  benchHeroPlaced: { opacity: 0.5 },
-  benchName: { color: '#ccc', fontSize: 9, fontWeight: '600', textAlign: 'center', marginTop: 3 },
-  benchPower: { color: '#f1c40f', fontSize: 9, marginTop: 1 },
-  placedBadge: { marginTop: 2, backgroundColor: '#27ae6044', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 },
-  placedBadgeText: { color: '#27ae60', fontSize: 7, fontWeight: '700' },
-  enemyPreview: { borderTopWidth: 1, borderTopColor: '#1e1e2e', paddingVertical: 6, paddingHorizontal: 4 },
-  enemyPreviewTitle: { color: '#c0392b', fontSize: 9, fontWeight: '700', paddingHorizontal: 8, marginBottom: 4, letterSpacing: 1 },
-  enemyChip: { alignItems: 'center', marginHorizontal: 4, minWidth: 60 },
-  enemyChipName: { color: '#e74c3c', fontSize: 8, fontWeight: '600', marginTop: 2, textAlign: 'center', maxWidth: 60 },
+  powerPill: { flexDirection: 'row', alignItems: 'baseline', backgroundColor: palette.panelDeep, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: '#0007' },
+  powerText: { fontWeight: '900', fontSize: 13 },
+  recText: { color: palette.textDim, fontSize: 10, fontWeight: '700' },
+  toolbar: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingVertical: 4, flexWrap: 'wrap' },
+  predict: { backgroundColor: palette.purpleDeep + '55', marginHorizontal: 12, borderRadius: 8, paddingVertical: 6, marginTop: 2 },
+  predictText: { color: '#caa8ff', fontWeight: '800', fontSize: 12, textAlign: 'center' },
+  loadouts: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingTop: 6 },
+  loName: { color: palette.textSoft, fontSize: 11, fontWeight: '800', textAlign: 'center' },
+  arenaWrap: { padding: 8 },
+  arena: { borderRadius: radius.lg, overflow: 'hidden', borderWidth: 3, borderColor: palette.goldDeep },
+  cell: { flex: 1, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: '#ffffff12' },
+  cellSel: { borderWidth: 2, borderColor: palette.gold },
+  midR: { borderRightWidth: 2, borderRightColor: palette.gold + '99' },
+  plus: { color: '#ffffff33', fontSize: 18, fontWeight: '900' },
+  synergies: { paddingHorizontal: 12, gap: 6, paddingVertical: 2 },
+  synChip: { borderRadius: 10, paddingVertical: 4, paddingHorizontal: 10, alignItems: 'center', borderWidth: 1 },
+  synOn: { backgroundColor: palette.greenDeep + '44', borderColor: palette.green },
+  synOff: { backgroundColor: palette.panelDeep, borderColor: '#0006' },
+  synName: { color: palette.green, fontSize: 10, fontWeight: '800' },
+  synCount: { color: palette.green, fontSize: 9, fontWeight: '700' },
+  benchWrap: { paddingTop: 6 },
+  benchTitle: { color: palette.textMute, fontSize: 9, paddingHorizontal: 12, marginBottom: 6, fontWeight: '700', letterSpacing: 0.5 },
+  benchHero: { backgroundColor: palette.panelDeep, borderRadius: 12, padding: 6, alignItems: 'center', width: 74, borderWidth: 2, borderColor: '#0006' },
+  benchSel: { borderColor: palette.gold, backgroundColor: palette.goldDark + '44' },
+  benchName: { color: palette.textSoft, fontSize: 9, fontWeight: '700', marginTop: 3 },
+  benchPower: { color: palette.gold, fontSize: 9, fontWeight: '800', marginTop: 1 },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
+  enemyMini: { flex: 1 },
+  enemyMiniTitle: { color: '#ff9a8a', fontSize: 9, fontWeight: '900', marginBottom: 4, letterSpacing: 1 },
 });

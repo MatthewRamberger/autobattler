@@ -1,7 +1,10 @@
 import React, { useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useGameStore } from './src/store/gameStore';
+import { ScreenBackground } from './src/components/ui';
+import { palette } from './src/theme';
+import ErrorBoundary from './src/components/ErrorBoundary';
 import HomeScreen from './src/screens/HomeScreen';
 import CollectionScreen from './src/screens/CollectionScreen';
 import EquipmentScreen from './src/screens/EquipmentScreen';
@@ -21,7 +24,7 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import SummonScreen from './src/screens/SummonScreen';
 
 export default function App() {
-  const { currentScreen, hydrated, hydrate } = useGameStore();
+  const { currentScreen, hydrated, hydrate, setScreen } = useGameStore();
 
   useEffect(() => {
     hydrate();
@@ -30,8 +33,11 @@ export default function App() {
   if (!hydrated) {
     return (
       <View style={styles.loading}>
+        <ScreenBackground />
         <StatusBar style="light" />
-        <ActivityIndicator size="large" color="#f1c40f" />
+        <Text style={styles.logo}>⚔️</Text>
+        <ActivityIndicator size="large" color={palette.gold} style={{ marginTop: 16 }} />
+        <Text style={styles.loadingText}>Mustering the army…</Text>
       </View>
     );
   }
@@ -62,11 +68,15 @@ export default function App() {
   return (
     <>
       <StatusBar style="light" />
-      {renderScreen()}
+      <ErrorBoundary key={currentScreen} onRecover={() => setScreen('home')}>
+        {renderScreen()}
+      </ErrorBoundary>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, backgroundColor: '#0a0a14', justifyContent: 'center', alignItems: 'center' },
+  loading: { flex: 1, backgroundColor: palette.bgBot, justifyContent: 'center', alignItems: 'center' },
+  logo: { fontSize: 72 },
+  loadingText: { color: palette.textSoft, marginTop: 14, fontWeight: '700', letterSpacing: 1 },
 });
