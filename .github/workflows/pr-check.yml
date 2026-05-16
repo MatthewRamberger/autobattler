@@ -90,6 +90,21 @@ jobs:
             2>&1 | tee /tmp/gradle-build.log
           exit ${PIPESTATUS[0]}
 
+      - name: Post Gradle log as PR comment
+        if: failure()
+        run: |
+          LOG=$(cat /tmp/gradle-build.log 2>/dev/null | tail -100 || echo "Log not found")
+          BODY=$(python3 -c "
+          import json, sys
+          log = open('/tmp/gradle-build.log').read()[-4000:] if __import__('os').path.exists('/tmp/gradle-build.log') else 'Log not found'
+          print(json.dumps({'body': '**Gradle build log (last 4KB):**\n\`\`\`\n' + log + '\n\`\`\`'}))
+          ")
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --data "$BODY"
+
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
