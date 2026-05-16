@@ -3,6 +3,7 @@ import {
   GridPosition, Element, StatusEffectType, ActiveStatusEffect, AbilityDef,
 } from '../types';
 import { ABILITIES, CLASS_DEFAULT_ABILITY } from '../data/abilities';
+import { getPassive, DmgContext } from '../data/passives';
 
 const MAX_TICKS = 400;
 const GRID_COLS = 10;
@@ -88,8 +89,24 @@ function findEmptyCell(all: BattleUnit[], near: GridPosition, isPlayerSide: bool
 function applyDamage(
   target: BattleUnit, raw: number, element: Element, attacker: BattleUnit | null,
   events: BattleEvent[], log: BattleLogEntry[], tick: number,
-  options?: { isCrit?: boolean; bypassDodge?: boolean; isAbility?: boolean }
+  options?: { isCrit?: boolean; bypassDodge?: boolean; isAbility?: boolean },
+  all?: BattleUnit[]
 ) {
+  // Passive: modify outgoing damage from attacker
+  const ctx: DmgContext = {
+    raw,
+    isCrit: !!options?.isCrit,
+    isAbility: !!options?.isAbility,
+  };
+  if (attacker) {
+    const pas = getPassive(attacker.heroId);
+    pas?.modifyOutgoing?.(attacker, target, ctx);
+  }
+  // Passive: modify incoming on target (e.g. damage cap)
+  const targetPas = getPassive(target.heroId);
+  targetPas?.modifyIncoming?.(target, attacker, ctx);
+  raw = ctx.raw;
+
   // Dodge
   if (!options?.bypassDodge && Math.random() < target.dodge) {
     events.push({ tick, kind: 'dodge', sourceId: attacker?.id, targetId: target.id });
@@ -140,15 +157,32 @@ function applyDamage(
     }
   }
 
+  // Passive: onDamageDealt (lifesteal, radiance)
+  if (attacker && dmg > 0) {
+    const pasAtk = getPassive(attacker.heroId);
+    pasAtk?.onDamageDealt?.(attacker, target, dmg, all ?? [], events, log, tick);
+  }
+
   if (target.hp === 0 && target.isAlive) {
-    target.isAlive = false;
-    if (attacker) attacker.killCount++;
-    events.push({ tick, kind: 'death', targetId: target.id });
-    log.push({
-      tick, type: 'death',
-      text: `${target.name} has fallen!`,
-      targetId: target.id,
-    });
+    // Passive: onWouldDie (revive)
+    const cancelled = targetPas?.onWouldDie?.(target, all ?? [], events, log, tick);
+    if (!cancelled) {
+      target.isAlive = false;
+      if (attacker) attacker.killCount++;
+      events.push({ tick, kind: 'death', targetId: target.id });
+      log.push({
+        tick, type: 'death',
+        text: `${target.name} has fallen!`,
+        targetId: target.id,
+      });
+      // Notify allies of the death (Ironwall gains defense, etc.)
+      if (all) {
+        for (const ally of all.filter((u) => u.isPlayer === target.isPlayer && u.isAlive && u.id !== target.id)) {
+          const allyPas = getPassive(ally.heroId);
+          allyPas?.onAllyDeath?.(ally, target);
+        }
+      }
+    }
   }
 
   return dmg;
@@ -227,7 +261,7 @@ function executeAbility(
       const targets = enemies.filter((e) => chebyshev(e.position, primary.position) <= radius);
       for (const tgt of targets) {
         const dmg = caster.attack * power;
-        applyDamage(tgt, dmg, ability.element, caster, events, log, tick, { isAbility: true });
+        applyDamage(tgt, dmg, ability.element, caster, events, log, tick, { isAbility: true }, all);
         if (data.status && data.duration && data.status !== 'taunt') {
           applyStatus(tgt, data.status, data.duration, data.statusPower ?? 1, caster, events, log, tick);
         }
@@ -246,7 +280,7 @@ function executeAbility(
         if (!target.isAlive) break;
         const isCrit = Math.random() < caster.critRate;
         const dmg = caster.attack * power * (isCrit ? caster.critDamage : 1);
-        applyDamage(target, dmg, ability.element, caster, events, log, tick, { isCrit, isAbility: true });
+        applyDamage(target, dmg, ability.element, caster, events, log, tick, { isCrit, isAbility: true }, all);
       }
       if (data.selfBuff && data.duration) {
         // We model temporary buffs by stat patching + an 'rage' status to count down.
@@ -294,14 +328,14 @@ function executeAbility(
         caster.position = teleport;
       }
       const dmg = caster.attack * power * caster.critDamage;
-      applyDamage(target, dmg, ability.element, caster, events, log, tick, { isCrit: true, isAbility: true });
+      applyDamage(target, dmg, ability.element, caster, events, log, tick, { isCrit: true, isAbility: true }, all);
       break;
     }
     case 'lifesteal': {
       const target = pickTarget(caster, all);
       if (!target) break;
       const dmg = caster.attack * power;
-      const dealt = applyDamage(target, dmg, ability.element, caster, events, log, tick, { isAbility: true });
+      const dealt = applyDamage(target, dmg, ability.element, caster, events, log, tick, { isAbility: true }, all);
       if (dealt > 0) {
         applyHeal(caster, dealt, caster, events, log, tick);
       }
@@ -315,7 +349,7 @@ function executeAbility(
       ).slice(0, targets);
       for (const tgt of sorted) {
         const dmg = caster.attack * power;
-        applyDamage(tgt, dmg, ability.element, caster, events, log, tick, { isAbility: true });
+        applyDamage(tgt, dmg, ability.element, caster, events, log, tick, { isAbility: true }, all);
         if (data.status && data.duration) {
           applyStatus(tgt, data.status, data.duration, data.statusPower ?? 1, caster, events, log, tick);
         }
@@ -346,7 +380,7 @@ function executeAbility(
 // Status tick processing
 // ============================================================
 function processStatusTick(
-  unit: BattleUnit, events: BattleEvent[], log: BattleLogEntry[], tick: number
+  unit: BattleUnit, all: BattleUnit[], events: BattleEvent[], log: BattleLogEntry[], tick: number
 ) {
   if (!unit.isAlive) return;
 
@@ -361,7 +395,7 @@ function processStatusTick(
         const elementForType: Record<string, Element> = {
           poison: 'nature', burn: 'fire', bleed: 'physical',
         };
-        applyDamage(unit, dmg, elementForType[s.type], null, events, log, tick, { bypassDodge: true, isAbility: true });
+        applyDamage(unit, dmg, elementForType[s.type], null, events, log, tick, { bypassDodge: true, isAbility: true }, all);
         events.push({ tick, kind: 'status_tick', targetId: unit.id, status: s.type, value: dmg });
         break;
       }
@@ -383,9 +417,125 @@ function processStatusTick(
 }
 
 // ============================================================
+// Boss mechanics
+// ============================================================
+function runBossMechanic(
+  mechanic: 'enrage' | 'summon' | 'aoe-burst' | 'lifelink',
+  units: BattleUnit[],
+  events: BattleEvent[],
+  log: BattleLogEntry[],
+  tick: number,
+  _enrageGate: () => boolean,
+) {
+  const enemies = units.filter((u) => !u.isPlayer);
+  if (enemies.length === 0) return;
+  // The "boss" is the highest-HP-max enemy still alive.
+  const boss = enemies.filter((u) => u.isAlive).reduce(
+    (b, u) => (!b || u.maxHp > b.maxHp ? u : b),
+    null as BattleUnit | null
+  );
+  if (!boss) return;
+
+  switch (mechanic) {
+    case 'enrage': {
+      // At <40% HP and not yet enraged, gain +40% atk and +25% speed.
+      if (!(boss as any)._enraged && boss.hp / boss.maxHp < 0.4) {
+        (boss as any)._enraged = true;
+        boss.attack = Math.round(boss.attack * 1.4);
+        boss.speed = Math.round(boss.speed * 1.25);
+        boss.critRate = Math.min(0.85, boss.critRate + 0.15);
+        log.push({
+          tick, type: 'status',
+          text: `🔥 ${boss.name} ENRAGES!`, targetId: boss.id,
+        });
+        events.push({ tick, kind: 'status_apply', targetId: boss.id, status: 'rage', value: 1 });
+      }
+      break;
+    }
+    case 'lifelink': {
+      // While 2+ enemies remain, the boss takes 40% less damage of every element.
+      const minionsAlive = enemies.filter((u) => u.isAlive && u.id !== boss.id).length;
+      if (minionsAlive >= 1) {
+        boss.resistance = { physical: 0.4, fire: 0.4, ice: 0.4, shadow: 0.4, holy: 0.4, nature: 0.4, lightning: 0.4 };
+      } else if (!(boss as any)._lifelinkBroken) {
+        (boss as any)._lifelinkBroken = true;
+        boss.resistance = {};
+        log.push({
+          tick, type: 'status',
+          text: `💔 ${boss.name}'s lifelink severed!`, targetId: boss.id,
+        });
+      }
+      break;
+    }
+    case 'aoe-burst': {
+      // Every 18 ticks the boss unleashes a low-damage AoE on all heroes.
+      if (tick > 0 && tick % 18 === 0) {
+        const players = units.filter((u) => u.isPlayer && u.isAlive);
+        log.push({
+          tick, type: 'ability',
+          text: `💥 ${boss.name} unleashes Cataclysm!`, attackerId: boss.id, element: 'shadow',
+        });
+        events.push({ tick, kind: 'ability', sourceId: boss.id, text: 'Cataclysm' });
+        for (const p of players) {
+          applyDamage(p, boss.attack * 0.5, 'shadow', boss, events, log, tick, { isAbility: true, bypassDodge: true }, units);
+        }
+      }
+      break;
+    }
+    case 'summon': {
+      // Every 24 ticks, summon a shadow minion adjacent to boss if a free cell exists.
+      if (tick > 0 && tick % 24 === 0) {
+        for (let row = 0; row < 3; row++) {
+          const candidate = { col: Math.min(9, boss.position.col), row };
+          const occupied = units.some((u) => u.isAlive && u.position.col === candidate.col && u.position.row === candidate.row);
+          if (!occupied) {
+            const minion: BattleUnit = {
+              ...boss,
+              id: `summon_${tick}_${row}`,
+              heroId: 'summon',
+              name: 'Shadow Spawn',
+              icon: '🦑',
+              hp: Math.round(boss.maxHp * 0.2),
+              maxHp: Math.round(boss.maxHp * 0.2),
+              attack: Math.round(boss.attack * 0.4),
+              defense: Math.round(boss.defense * 0.4),
+              speed: 4,
+              range: 1,
+              critRate: 0.05,
+              dodge: 0.05,
+              mana: 0, maxMana: 0, manaRegen: 0,
+              position: candidate,
+              statuses: [],
+              shield: 0, damageDealt: 0, damageTaken: 0, healingDone: 0, killCount: 0,
+              stars: 0,
+              abilityId: undefined,
+              ticksUntilAttack: 1, ticksUntilAbility: 99,
+              isAlive: true,
+            };
+            units.push(minion);
+            log.push({
+              tick, type: 'status',
+              text: `${boss.name} summons a Shadow Spawn!`,
+              targetId: minion.id,
+            });
+            events.push({ tick, kind: 'status_apply', targetId: minion.id, status: 'rage', value: 0 });
+            break;
+          }
+        }
+      }
+      break;
+    }
+  }
+}
+
+// ============================================================
 // Main battle loop
 // ============================================================
-export function computeBattle(playerUnits: BattleUnit[], enemyUnits: BattleUnit[]): BattleResult {
+export function computeBattle(
+  playerUnits: BattleUnit[],
+  enemyUnits: BattleUnit[],
+  options?: { bossMechanic?: 'enrage' | 'summon' | 'aoe-burst' | 'lifelink' }
+): BattleResult {
   const units: BattleUnit[] = [
     ...playerUnits.map(cloneUnit),
     ...enemyUnits.map(cloneUnit),
@@ -394,6 +544,7 @@ export function computeBattle(playerUnits: BattleUnit[], enemyUnits: BattleUnit[
   const log: BattleLogEntry[] = [];
   const events: BattleEvent[] = [];
   let tick = 0;
+  let bossEnraged = false;
 
   while (tick < MAX_TICKS) {
     const alive = units.filter((u) => u.isAlive);
@@ -402,7 +553,18 @@ export function computeBattle(playerUnits: BattleUnit[], enemyUnits: BattleUnit[
     if (playerAlive.length === 0 || enemyAlive.length === 0) break;
 
     // 1) Status ticks
-    for (const u of alive) processStatusTick(u, events, log, tick);
+    for (const u of alive) processStatusTick(u, units, events, log, tick);
+
+    // 1a) Passive: onTickStart (auras, regen)
+    for (const u of units.filter((x) => x.isAlive)) {
+      const pas = getPassive(u.heroId);
+      pas?.onTickStart?.(u, units, events, log, tick);
+    }
+
+    // 1b) Boss mechanics
+    if (options?.bossMechanic) {
+      runBossMechanic(options.bossMechanic, units, events, log, tick, () => bossEnraged);
+    }
 
     // 2) Recompute alive after DoTs
     const alive2 = units.filter((u) => u.isAlive);
@@ -420,6 +582,10 @@ export function computeBattle(playerUnits: BattleUnit[], enemyUnits: BattleUnit[
 
     for (const attacker of acting) {
       if (!attacker.isAlive) continue;
+
+      // Passive onTurnStart (bloodrage, monk dodge)
+      const pas = getPassive(attacker.heroId);
+      pas?.onTurnStart?.(attacker);
 
       // Try ability first
       if (
@@ -477,7 +643,7 @@ export function computeBattle(playerUnits: BattleUnit[], enemyUnits: BattleUnit[
         events.push({ tick, kind: 'attack', sourceId: attacker.id, targetId: target.id });
       }
 
-      applyDamage(target, dmg, attacker.element, attacker, events, log, tick, { isCrit });
+      applyDamage(target, dmg, attacker.element, attacker, events, log, tick, { isCrit }, units);
 
       // Class passives on basic attack
       if (attacker.heroClass === 'Mage' && attacker.element === 'fire') {

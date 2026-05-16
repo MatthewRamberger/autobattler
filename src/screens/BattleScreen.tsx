@@ -117,7 +117,9 @@ export default function BattleScreen() {
     });
 
     // Pre-compute the full battle.
-    const result = computeBattle(playerUnits, enemyUnits);
+    const result = computeBattle(playerUnits, enemyUnits, {
+      bossMechanic: level?.bossMechanic,
+    });
     eventsRef.current = result.events;
     logRef.current = result.log;
     finalUnitsRef.current = result.finalUnits;
@@ -584,6 +586,17 @@ function UnitCell({ unit, vfxNumbers }: { unit: LiveUnit; vfxNumbers: VfxNumber[
                   ))}
                 </View>
               )}
+              {unit.abilityId && (
+                <View style={[
+                  styles.abilityRing,
+                  unit.ticksUntilAbility === 0 &&
+                  unit.mana >= (ABILITIES[unit.abilityId]?.manaCost ?? 999) && styles.abilityReady,
+                ]}>
+                  <Text style={styles.abilityIcon}>
+                    {unit.ticksUntilAbility === 0 ? (ABILITIES[unit.abilityId]?.icon ?? '✦') : unit.ticksUntilAbility}
+                  </Text>
+                </View>
+              )}
             </>
           ) : (
             <Text style={{ fontSize: 22, opacity: 0.4 }}>💀</Text>
@@ -704,6 +717,15 @@ const styles = StyleSheet.create({
     position: 'absolute', top: -4, flexDirection: 'row', gap: 1,
     backgroundColor: '#000a', borderRadius: 4, paddingHorizontal: 2,
   },
+  abilityRing: {
+    position: 'absolute', bottom: -2, left: -2,
+    width: 14, height: 14, borderRadius: 7,
+    backgroundColor: '#000a',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: '#444',
+  },
+  abilityReady: { borderColor: '#7c83fd', backgroundColor: '#7c83fdcc' },
+  abilityIcon: { color: '#fff', fontSize: 8, fontWeight: '900' },
   unitStatusRow: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#1e1e2e', padding: 10, maxHeight: 150 },
   unitStatusSide: { flex: 1 },
   sideLabel: { color: '#27ae60', fontSize: 9, fontWeight: '700', letterSpacing: 1, marginBottom: 6 },

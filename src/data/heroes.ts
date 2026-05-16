@@ -201,6 +201,58 @@ export const HEROES: Hero[] = [
     passiveDesc: 'Radiance: damage dealt heals nearby allies for 25%.',
     description: 'Mythic champion whose hammer carries the light of dawn.',
   }),
+  makeHero({
+    id: 'archer_2', name: 'Stormcaller', heroClass: 'Archer',
+    baseStats: {
+      maxHp: 130, attack: 42, defense: 9, speed: 6, range: 4,
+      critRate: 0.22, critDamage: 1.9, dodge: 0.14,
+      maxMana: 100, manaRegen: 7, element: 'lightning',
+      resistance: { lightning: 0.5, nature: 0.2 },
+    },
+    rarity: 'epic', icon: '⚡', portraitSeed: 141,
+    abilityId: 'multishot',
+    passiveDesc: 'Chain Lightning: basic attacks splash 30% damage to nearby enemies.',
+    description: 'A storm-touched archer whose arrows arc with lightning.',
+  }),
+  makeHero({
+    id: 'rogue_2', name: 'Nightveil', heroClass: 'Rogue',
+    baseStats: {
+      maxHp: 125, attack: 52, defense: 7, speed: 8, range: 1,
+      critRate: 0.32, critDamage: 2.1, dodge: 0.26,
+      maxMana: 90, manaRegen: 6, element: 'shadow',
+      resistance: { shadow: 0.35, holy: -0.2 },
+    },
+    rarity: 'legendary', icon: '🥷', portraitSeed: 151,
+    abilityId: 'shadowstrike',
+    passiveDesc: 'Vanish: gains +30% dodge for 4t after taking lethal damage (once).',
+    description: 'A phantom assassin who slips between heartbeats.',
+  }),
+  makeHero({
+    id: 'berserker_2', name: 'Bloodforge', heroClass: 'Berserker',
+    baseStats: {
+      maxHp: 180, attack: 64, defense: 12, speed: 4, range: 1,
+      critRate: 0.18, critDamage: 1.9, dodge: 0.05,
+      maxMana: 80, manaRegen: 7, element: 'physical',
+      resistance: { physical: 0.1 },
+    },
+    rarity: 'legendary', icon: '⚒️', portraitSeed: 161,
+    abilityId: 'bloodrage',
+    passiveDesc: 'Crimson Tide: kills restore 15% maxHP and grant +5 attack.',
+    description: 'A warlord whose strength swells with each fallen foe.',
+  }),
+  makeHero({
+    id: 'cleric_2', name: 'Solaris', heroClass: 'Cleric',
+    baseStats: {
+      maxHp: 150, attack: 28, defense: 12, speed: 4, range: 3,
+      critRate: 0.10, critDamage: 1.6, dodge: 0.07,
+      maxMana: 180, manaRegen: 12, element: 'holy',
+      resistance: { holy: 0.6, shadow: 0.3 },
+    },
+    rarity: 'legendary', icon: '🌅', portraitSeed: 171,
+    abilityId: 'divinelight',
+    passiveDesc: 'Sunblessing: overflow healing converts to shields for the ally.',
+    description: 'A high priestess of the dawn whose blessings transcend mortality.',
+  }),
 ];
 
 export function getHeroById(id: string): Hero | undefined {

@@ -8,6 +8,7 @@ import { HEROES } from '../data/heroes';
 import { EQUIPMENT, EQUIPMENT_SETS, MAX_FORGE_LEVEL, forgeShardsRequired } from '../data/equipment';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABILITIES } from '../data/abilities';
+import { rollDailyQuests } from '../data/dailyQuests';
 
 const SAVE_KEY = '@autobattler/save_v2';
 
@@ -40,6 +41,13 @@ interface GameStore extends GameState {
   claimAchievement: (id: string) => void;
   updateAchievementProgress: (id: string, delta: number) => void;
 
+  // Daily quests
+  rollDailyQuestsIfStale: () => void;
+  claimDailyQuest: (id: string) => void;
+
+  // Auto-resolve grind: simulate N battles back-to-back.
+  autoResolveLevel: (levelId: number, times: number) => Promise<{ wins: number; losses: number; goldGained: number; expGained: number }>;
+
   setBattleSpeed: (s: 1 | 2 | 4) => void;
   hydrate: () => Promise<void>;
   reset: () => void;
@@ -57,7 +65,7 @@ function buildInitialAchievements(): Record<string, { progress: number; claimed:
   return Object.fromEntries(ACHIEVEMENTS.map((a) => [a.id, { progress: 0, claimed: false }]));
 }
 
-const INITIAL_STATE: Pick<GameState, 'gold' | 'gems' | 'heroes' | 'equipment' | 'levelProgress' | 'placedHeroes' | 'currentLevelId' | 'selectedHeroId' | 'arenaWave' | 'arenaBestWave' | 'achievements' | 'shopStock' | 'shopRefreshAt' | 'battleSpeed' | 'totalBattles' | 'totalVictories' | 'totalDamageDealt' | 'totalKills' | 'hydrated'> = {
+const INITIAL_STATE: GameState = {
   gold: 250,
   gems: 0,
   heroes: buildInitialHeroes(),
@@ -77,6 +85,11 @@ const INITIAL_STATE: Pick<GameState, 'gold' | 'gems' | 'heroes' | 'equipment' | 
   totalDamageDealt: 0,
   totalKills: 0,
   hydrated: false,
+  dailyQuests: [],
+  dailyQuestProgress: {},
+  dailyResetAt: 0,
+  loginStreak: 0,
+  lastLoginDay: 0,
 };
 
 function generateShop(): ShopItem[] {
@@ -123,13 +136,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
   selectHero: (id) => set({ selectedHeroId: id }),
 
   levelUpHero: (heroId) => {
-    const { heroes, gold } = get();
+    const state = get();
+    const { heroes, gold, dailyQuestProgress } = state;
     const hero = heroes[heroId];
     if (!hero) return;
     const cost = hero.level * 50;
     if (gold < cost) return;
     const newLevel = hero.level + 1;
     const statBoost = 1.12;
+    const dq = dailyQuestProgress.daily_levelup ?? { progress: 0, claimed: false };
     set({
       gold: gold - cost,
       heroes: {
@@ -149,6 +164,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           },
         },
       },
+      dailyQuestProgress: { ...dailyQuestProgress, daily_levelup: { ...dq, progress: dq.progress + 1 } },
     });
     persist(get());
   },
@@ -355,6 +371,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const unlockedCount = Object.values(updatedHeroes).filter((h) => h.unlocked).length;
     ach['unlock_5_heroes'] = { ...(ach['unlock_5_heroes'] ?? { progress: 0, claimed: false }), progress: unlockedCount };
 
+    // Daily quest progress
+    const daily = { ...state.dailyQuestProgress };
+    function bumpDaily(id: string, n: number = 1) {
+      const cur = daily[id] ?? { progress: 0, claimed: false };
+      daily[id] = { ...cur, progress: cur.progress + n };
+    }
+    if (won) bumpDaily('daily_battles');
+    if (won && state.currentLevelId === -1) bumpDaily('daily_arena');
+    bumpDaily('daily_damage', stats.damage);
+    bumpDaily('daily_kills', stats.kills);
+
     set({
       gold: state.gold + (won ? gold : Math.floor(gold * 0.25)),
       gems: state.gems + (won ? 2 : 0),
@@ -362,6 +389,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       equipment: updatedEquipment,
       levelProgress: updatedProgress,
       achievements: ach,
+      dailyQuestProgress: daily,
       totalBattles: state.totalBattles + 1,
       totalVictories: state.totalVictories + (won ? 1 : 0),
       totalDamageDealt: state.totalDamageDealt + stats.damage,
@@ -410,11 +438,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ? (Number.isInteger(base) ? Math.round(base * factor) : +(base * factor).toFixed(2))
         : v;
     }
+    const dq = get().dailyQuestProgress.daily_forge ?? { progress: 0, claimed: false };
     set({
       gold: gold - goldCost,
       equipment: {
         ...equipment,
         [id]: { ...item, level: newLevel, shards: item.shards - shardCost, statBonus: newStatBonus },
+      },
+      dailyQuestProgress: {
+        ...get().dailyQuestProgress,
+        daily_forge: { ...dq, progress: dq.progress + 1 },
       },
     });
     // Achievement
@@ -494,6 +527,103 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ achievements: { ...state.achievements, [id]: { ...cur, progress: cur.progress + delta } } });
   },
 
+  rollDailyQuestsIfStale: () => {
+    const now = Date.now();
+    const state = get();
+    const today = Math.floor(now / 86400000);
+    const dayChanged = today !== state.lastLoginDay;
+    if (!dayChanged && state.dailyResetAt > now && state.dailyQuests.length > 0) return;
+
+    const quests = rollDailyQuests();
+    const progress: Record<string, { progress: number; claimed: boolean }> = {};
+    for (const q of quests) progress[q.id] = { progress: 0, claimed: false };
+
+    // Daily login bonus & streak (resets if >1 day gap).
+    let streak = state.loginStreak;
+    let bonusGold = 0;
+    let bonusGems = 0;
+    if (state.lastLoginDay === 0 || today - state.lastLoginDay > 1) {
+      streak = 1;
+    } else if (today > state.lastLoginDay) {
+      streak += 1;
+    }
+    if (state.lastLoginDay !== today) {
+      bonusGold = 100 + streak * 25;
+      bonusGems = Math.min(20, streak * 2);
+    }
+
+    set({
+      dailyQuests: quests,
+      dailyQuestProgress: progress,
+      dailyResetAt: (today + 1) * 86400000,
+      loginStreak: streak,
+      lastLoginDay: today,
+      gold: state.gold + bonusGold,
+      gems: state.gems + bonusGems,
+    });
+    persist(get());
+  },
+
+  claimDailyQuest: (id) => {
+    const state = get();
+    const quest = state.dailyQuests.find((q) => q.id === id);
+    const prog = state.dailyQuestProgress[id];
+    if (!quest || !prog) return;
+    if (prog.claimed || prog.progress < quest.goal) return;
+    set({
+      gold: state.gold + (quest.reward.gold ?? 0),
+      gems: state.gems + (quest.reward.gems ?? 0),
+      dailyQuestProgress: { ...state.dailyQuestProgress, [id]: { ...prog, claimed: true } },
+    });
+    persist(get());
+  },
+
+  autoResolveLevel: async (levelId, times) => {
+    // Lazy-import to avoid cycles.
+    const { computeBattle, buildPlayerUnit, buildEnemyUnit } = await import('../utils/battleEngine');
+    const { LEVELS } = await import('../data/levels');
+    const level = LEVELS.find((l) => l.id === levelId);
+    if (!level) return { wins: 0, losses: 0, goldGained: 0, expGained: 0 };
+    const state = get();
+    let wins = 0, losses = 0, goldGained = 0, expGained = 0;
+    for (let i = 0; i < times; i++) {
+      const placedIds = Object.keys(state.placedHeroes);
+      if (placedIds.length === 0) break;
+      const playerUnits = placedIds.map((heroId) => {
+        const hero = state.heroes[heroId];
+        const stats = getHeroEffectiveStats(heroId, get())!;
+        return buildPlayerUnit({
+          heroId, name: hero.name, heroClass: hero.heroClass,
+          maxHp: stats.maxHp, attack: stats.attack, defense: stats.defense,
+          speed: stats.speed, range: stats.range,
+          critRate: stats.critRate, critDamage: stats.critDamage, dodge: stats.dodge,
+          maxMana: stats.maxMana, manaRegen: stats.manaRegen,
+          element: stats.element, resistance: stats.resistance,
+          position: state.placedHeroes[heroId], icon: hero.icon, portraitSeed: hero.portraitSeed,
+          stars: hero.stars, abilityId: hero.abilityId,
+        });
+      });
+      const enemyUnits = level.enemies.map((e, idx) => buildEnemyUnit({
+        name: e.name, heroClass: e.heroClass, level: e.level,
+        position: e.position, icon: e.icon, index: idx,
+        element: e.element, stars: e.stars, abilityId: e.abilityId,
+      }));
+      const result = computeBattle(playerUnits, enemyUnits, { bossMechanic: level.bossMechanic });
+      const won = result.won;
+      const totalDmg = result.finalUnits.filter((u) => u.isPlayer).reduce((s, u) => s + u.damageDealt, 0);
+      const totalKills = result.finalUnits.filter((u) => u.isPlayer).reduce((s, u) => s + u.killCount, 0);
+      const gold = won ? level.rewards.gold : Math.floor(level.rewards.gold * 0.25);
+      const exp = won ? level.rewards.experience : Math.floor(level.rewards.experience * 0.1);
+      const drops = level.rewards.possibleDrops;
+      const drop = won && Math.random() < 0.45 ? drops[Math.floor(Math.random() * drops.length)] : undefined;
+      // Apply rewards via the existing path.
+      get().applyBattleRewards(won, gold, exp, placedIds, { damage: totalDmg, kills: totalKills }, drop);
+      if (won) { wins++; goldGained += gold; expGained += exp; }
+      else losses++;
+    }
+    return { wins, losses, goldGained, expGained };
+  },
+
   setBattleSpeed: (s) => { set({ battleSpeed: s }); persist(get()); },
 
   hydrate: async () => {
@@ -529,6 +659,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (get().shopStock.length === 0) {
         get().refreshShop();
       }
+      // Roll daily quests if stale or never set.
+      get().rollDailyQuestsIfStale();
     } catch (e) {
       set({ hydrated: true });
     }
@@ -562,6 +694,11 @@ function persist(state: GameState) {
       totalVictories: state.totalVictories,
       totalDamageDealt: state.totalDamageDealt,
       totalKills: state.totalKills,
+      dailyQuests: state.dailyQuests,
+      dailyQuestProgress: state.dailyQuestProgress,
+      dailyResetAt: state.dailyResetAt,
+      loginStreak: state.loginStreak,
+      lastLoginDay: state.lastLoginDay,
     };
     AsyncStorage.setItem(SAVE_KEY, JSON.stringify(toSave)).catch(() => {});
   }, 250);

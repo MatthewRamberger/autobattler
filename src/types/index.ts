@@ -263,7 +263,9 @@ export type Screen =
   | 'shop'
   | 'achievements'
   | 'arena'
-  | 'forge';
+  | 'forge'
+  | 'daily'
+  | 'stats';
 
 export interface Achievement {
   id: string;
@@ -315,4 +317,10 @@ export interface GameState {
   totalDamageDealt: number;
   totalKills: number;
   hydrated: boolean;
+  // Daily quests
+  dailyQuests: Achievement[];
+  dailyQuestProgress: Record<string, AchievementProgress>;
+  dailyResetAt: number;
+  loginStreak: number;
+  lastLoginDay: number; // floor(Date.now() / 86400000)
 }

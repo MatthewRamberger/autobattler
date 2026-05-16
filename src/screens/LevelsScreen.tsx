@@ -1,15 +1,27 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
 import { useGameStore } from '../store/gameStore';
 import { LEVELS, DIFFICULTY_COLORS } from '../data/levels';
 import HeroPortrait from '../components/HeroPortrait';
 
 export default function LevelsScreen() {
-  const { setScreen, levelProgress, setCurrentLevel } = useGameStore();
+  const { setScreen, levelProgress, setCurrentLevel, autoResolveLevel, placedHeroes, autoPlace } = useGameStore();
+  const [grinding, setGrinding] = useState<number | null>(null);
 
   function handleSelectLevel(levelId: number) {
     setCurrentLevel(levelId);
     setScreen('battle-prep');
+  }
+
+  async function handleAutoResolve(levelId: number, times: number) {
+    if (Object.keys(placedHeroes).length === 0) autoPlace();
+    setGrinding(levelId);
+    const r = await autoResolveLevel(levelId, times);
+    setGrinding(null);
+    Alert.alert(
+      `Auto-resolve ×${times}`,
+      `Wins: ${r.wins}\nLosses: ${r.losses}\nGold: +${r.goldGained}\nEXP: +${r.expGained}`,
+    );
   }
 
   return (
@@ -92,7 +104,18 @@ export default function LevelsScreen() {
 
               <View style={styles.statusCol}>
                 {isCompleted ? (
-                  <Text style={styles.starsText}>⭐⭐⭐</Text>
+                  <>
+                    <Text style={styles.starsText}>⭐⭐⭐</Text>
+                    <TouchableOpacity
+                      onPress={(e) => { e.stopPropagation?.(); handleAutoResolve(level.id, 5); }}
+                      style={styles.autoBtn}
+                      disabled={grinding === level.id}
+                    >
+                      <Text style={styles.autoText}>
+                        {grinding === level.id ? '…' : '×5'}
+                      </Text>
+                    </TouchableOpacity>
+                  </>
                 ) : isLocked ? (
                   <Text style={styles.lockIcon}>🔒</Text>
                 ) : (
@@ -138,4 +161,6 @@ const styles = StyleSheet.create({
   starsText: { fontSize: 10 },
   lockIcon: { fontSize: 18 },
   playBtn: { color: '#27ae60', fontSize: 22, fontWeight: '700' },
+  autoBtn: { marginTop: 4, backgroundColor: '#e67e2233', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: '#e67e22' },
+  autoText: { color: '#e67e22', fontSize: 10, fontWeight: '800' },
 });

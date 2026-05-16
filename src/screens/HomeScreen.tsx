@@ -7,10 +7,18 @@ export default function HomeScreen() {
   const {
     setScreen, gold, gems, heroes, levelProgress, arenaBestWave,
     totalVictories, totalBattles, totalDamageDealt, totalKills, reset,
+    dailyQuests, dailyQuestProgress, achievements, loginStreak,
   } = useGameStore();
   const unlockedCount = Object.values(heroes).filter((h) => h.unlocked).length;
   const completedLevels = Object.values(levelProgress).filter((p) => p.completed).length;
   const winRate = totalBattles > 0 ? Math.round((totalVictories / totalBattles) * 100) : 0;
+  const claimableQuests = dailyQuests.filter((q) => {
+    const ap = dailyQuestProgress[q.id];
+    return ap && ap.progress >= q.goal && !ap.claimed;
+  }).length;
+  const claimableAchievements = Object.entries(achievements).filter(([_id, ap]) => {
+    return !ap.claimed && ap.progress > 0;
+  }).length;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -45,7 +53,9 @@ export default function HomeScreen() {
         <MenuButton icon="🎒" label="EQUIPMENT" sub="Weapons, armor, accessories" onPress={() => setScreen('equipment')} color="#27ae60" />
         <MenuButton icon="🔨" label="FORGE" sub="Upgrade gear with shards" onPress={() => setScreen('forge')} color="#e67e22" />
         <MenuButton icon="🏪" label="SHOP" sub="Buy gear with gold or gems" onPress={() => setScreen('shop')} color="#f1c40f" />
-        <MenuButton icon="🏆" label="ACHIEVEMENTS" sub="Claim milestone rewards" onPress={() => setScreen('achievements')} color="#bb8fce" />
+        <MenuButton icon="📅" label="DAILY" sub={`Streak 🔥 ${loginStreak} · ${claimableQuests} ready to claim`} onPress={() => setScreen('daily')} color="#e67e22" badge={claimableQuests} />
+        <MenuButton icon="🏆" label="ACHIEVEMENTS" sub="Claim milestone rewards" onPress={() => setScreen('achievements')} color="#bb8fce" badge={claimableAchievements} />
+        <MenuButton icon="📊" label="STATS" sub="Lifetime progress & top heroes" onPress={() => setScreen('stats')} color="#7c83fd" />
 
         <View style={styles.statsCard}>
           <Text style={styles.statsCardTitle}>LIFETIME STATS</Text>
@@ -87,8 +97,8 @@ export default function HomeScreen() {
   );
 }
 
-function MenuButton({ icon, label, sub, onPress, color }: {
-  icon: string; label: string; sub: string; onPress: () => void; color: string;
+function MenuButton({ icon, label, sub, onPress, color, badge }: {
+  icon: string; label: string; sub: string; onPress: () => void; color: string; badge?: number;
 }) {
   return (
     <TouchableOpacity style={[styles.menuBtn, { borderLeftColor: color }]} onPress={onPress} activeOpacity={0.8}>
@@ -97,6 +107,11 @@ function MenuButton({ icon, label, sub, onPress, color }: {
         <Text style={[styles.menuLabel, { color }]}>{label}</Text>
         <Text style={styles.menuSub}>{sub}</Text>
       </View>
+      {badge && badge > 0 ? (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{badge}</Text>
+        </View>
+      ) : null}
       <Text style={styles.menuArrow}>›</Text>
     </TouchableOpacity>
   );
@@ -120,6 +135,8 @@ const styles = StyleSheet.create({
   menuLabel: { fontSize: 15, fontWeight: '800', letterSpacing: 1 },
   menuSub: { color: '#666', fontSize: 11, marginTop: 2 },
   menuArrow: { color: '#444', fontSize: 22 },
+  badge: { backgroundColor: '#e74c3c', borderRadius: 12, minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   statsCard: { backgroundColor: '#1e1e2e', borderRadius: 12, padding: 14, marginTop: 6 },
   statsCardTitle: { color: '#555', fontSize: 10, fontWeight: '800', letterSpacing: 2, marginBottom: 8 },
   statRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },

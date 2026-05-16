@@ -12,6 +12,8 @@ import ShopScreen from './src/screens/ShopScreen';
 import AchievementsScreen from './src/screens/AchievementsScreen';
 import ArenaScreen from './src/screens/ArenaScreen';
 import ForgeScreen from './src/screens/ForgeScreen';
+import DailyScreen from './src/screens/DailyScreen';
+import StatsScreen from './src/screens/StatsScreen';
 
 export default function App() {
   const { currentScreen, hydrated, hydrate } = useGameStore();
@@ -41,6 +43,8 @@ export default function App() {
       case 'achievements': return <AchievementsScreen />;
       case 'arena': return <ArenaScreen />;
       case 'forge': return <ForgeScreen />;
+      case 'daily': return <DailyScreen />;
+      case 'stats': return <StatsScreen />;
       default: return <HomeScreen />;
     }
   }
