@@ -4,11 +4,9 @@ on:
   push:
     branches: [main]
 
-# Required secrets:
-#   KEYSTORE_FILE       — base64-encoded .jks keystore (run: base64 -w0 release.keystore)
-#   KEYSTORE_PASSWORD   — keystore store password
-#   KEY_ALIAS           — key alias inside the keystore
-#   KEY_PASSWORD        — key password
+# Signing credentials are stored in .github/signing/ (committed to repo).
+# This is acceptable for a hobby project with no sensitive user data.
+# To rotate credentials, regenerate the keystore and update keystore.properties.
 
 jobs:
   build-release:
@@ -44,20 +42,29 @@ jobs:
       - name: Expo prebuild
         run: npx expo prebuild --platform android --no-install
 
+      - name: Decode keystore
+        run: |
+          base64 -d .github/signing/release.keystore.b64 > android/app/release.keystore
+
+      - name: Read signing config
+        id: signing
+        run: |
+          source <(sed 's/\r//' .github/signing/keystore.properties | sed 's/=/="/' | sed 's/$/"/')
+          echo "store_password=${storePassword}" >> $GITHUB_OUTPUT
+          echo "key_alias=${keyAlias}" >> $GITHUB_OUTPUT
+          echo "key_password=${keyPassword}" >> $GITHUB_OUTPUT
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
-
-      - name: Decode keystore
-        run: echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > android/app/release.keystore
 
       - name: Build release APK
         run: |
           cd android
           ./gradlew assembleRelease --no-daemon \
             -Pandroid.injected.signing.store.file=release.keystore \
-            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
-            -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
-            -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
+            -Pandroid.injected.signing.store.password=${{ steps.signing.outputs.store_password }} \
+            -Pandroid.injected.signing.key.alias=${{ steps.signing.outputs.key_alias }} \
+            -Pandroid.injected.signing.key.password=${{ steps.signing.outputs.key_password }}
 
       - name: Rename APK with version
         run: |
