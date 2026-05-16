@@ -1,0 +1,92 @@
+name: Release APK
+
+# Fires when a PR is merged into main (a merge creates a push event on main).
+# Also supports manual runs via workflow_dispatch for testing.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Signing credentials are stored in .github/signing/ (committed to repo).
+# This is acceptable for a hobby project with no sensitive user data.
+# To rotate credentials: regenerate the keystore and update keystore.properties.
+
+jobs:
+  build-release:
+    name: Signed release APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Expo prebuild
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Decode keystore
+        run: base64 -d .github/signing/release.keystore.b64 > android/app/release.keystore
+
+      - name: Read signing config
+        id: signing
+        run: |
+          source <(sed 's/\r//' .github/signing/keystore.properties | sed 's/=/="/' | sed 's/$/"/')
+          echo "store_password=${storePassword}" >> $GITHUB_OUTPUT
+          echo "key_alias=${keyAlias}" >> $GITHUB_OUTPUT
+          echo "key_password=${keyPassword}" >> $GITHUB_OUTPUT
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Build release APK
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file=release.keystore \
+            -Pandroid.injected.signing.store.password=${{ steps.signing.outputs.store_password }} \
+            -Pandroid.injected.signing.key.alias=${{ steps.signing.outputs.key_alias }} \
+            -Pandroid.injected.signing.key.password=${{ steps.signing.outputs.key_password }}
+
+      - name: Rename APK with version
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          SHA=${GITHUB_SHA::7}
+          mv android/app/build/outputs/apk/release/app-release.apk \
+             android/app/build/outputs/apk/release/autobattler-v${VERSION}-${SHA}.apk
+
+      - name: Upload release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: autobattler-release-${{ github.sha }}
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Create GitHub release
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: v${{ github.run_number }}
+          name: Release v${{ github.run_number }}
+          artifacts: android/app/build/outputs/apk/release/*.apk
+          makeLatest: true
