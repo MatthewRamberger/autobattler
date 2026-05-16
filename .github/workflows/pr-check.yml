@@ -66,17 +66,6 @@ jobs:
           mkdir -p ~/.gradle
           echo "org.gradle.java.installations.paths=$JAVA_HOME" >> ~/.gradle/gradle.properties
 
-      - name: Expo prebuild
-        run: npx expo prebuild --platform android --no-install
-
-      # Expo 54 defaults to NDK 27.1.12297006, which is not pre-installed on the runner.
-      # The runner has 27.3.13750724. Inject ext.ndkVersion before the expo-root-project
-      # plugin applies so its setIfNotExist() check finds it already set and skips override.
-      - name: Patch NDK version to pre-installed 27.3.13750724
-        run: |
-          sed -i 's/apply plugin: "expo-root-project"/ext.ndkVersion = "27.3.13750724"\napply plugin: "expo-root-project"/' \
-            android/build.gradle
-
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
@@ -85,10 +74,22 @@ jobs:
       - name: Build debug APK
         run: |
           cd android
-          ./gradlew assembleDebug --no-daemon \
-            -PreactNativeArchitectures=arm64-v8a
+          ./gradlew assembleDebug --no-daemon --stacktrace \
+            -PreactNativeArchitectures=arm64-v8a \
+            2>&1 | tee /tmp/gradle-build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload Gradle log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log-pr${{ github.event.pull_request.number }}
+          path: /tmp/gradle-build.log
+          retention-days: 3
+          if-no-files-found: warn
 
       - name: Upload debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: autobattler-debug-pr${{ github.event.pull_request.number }}

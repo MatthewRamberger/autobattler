@@ -55,16 +55,8 @@ jobs:
           mkdir -p ~/.gradle
           echo "org.gradle.java.installations.paths=$JAVA_HOME" >> ~/.gradle/gradle.properties
 
-      - name: Expo prebuild
-        run: npx expo prebuild --platform android --no-install
-
-      # Expo 54 defaults to NDK 27.1.12297006, which is not pre-installed on the runner.
-      # The runner has 27.3.13750724. Inject ext.ndkVersion before the expo-root-project
-      # plugin applies so its setIfNotExist() check finds it already set and skips override.
-      - name: Patch NDK version to pre-installed 27.3.13750724
-        run: |
-          sed -i 's/apply plugin: "expo-root-project"/ext.ndkVersion = "27.3.13750724"\napply plugin: "expo-root-project"/' \
-            android/build.gradle
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
 
       - name: Decode keystore
         run: base64 -d .github/signing/release.keystore.b64 > android/app/release.keystore
@@ -76,9 +68,6 @@ jobs:
           echo "store_password=${storePassword}" >> $GITHUB_OUTPUT
           echo "key_alias=${keyAlias}" >> $GITHUB_OUTPUT
           echo "key_password=${keyPassword}" >> $GITHUB_OUTPUT
-
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew
 
       - name: Build release APK
         run: |
