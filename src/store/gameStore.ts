@@ -10,6 +10,7 @@ import { ACHIEVEMENTS } from '../data/achievements';
 import { ABILITIES } from '../data/abilities';
 import { rollDailyQuests } from '../data/dailyQuests';
 import { applyTalentBonuses, availableTalentTier, TALENTS } from '../data/talents';
+import { computeMilestoneBonuses } from '../data/milestones';
 import {
   STRONGHOLD_BUILDINGS, strongholdGoldMultiplier, strongholdExpMultiplier,
   strongholdShardBonus,
@@ -83,6 +84,9 @@ interface GameStore extends GameState {
 
   // Quick fight: re-use last loadout for the given level.
   quickFight: (levelId: number) => void;
+
+  // Hero summoning gacha.
+  summonHero: () => Promise<{ heroId?: string; reward?: { kind: 'gems' | 'gold' | 'shards'; value: number } }>;
 
   // Mystery chest: roll a weighted reward.
   openMysteryChest: (rarity: 'wooden' | 'silver' | 'gold' | 'mythic') => Promise<{ items: { id: string; qty: number }[]; gold: number; gems: number }>;
@@ -1016,6 +1020,59 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ currentLevelId: levelId, currentScreen: 'battle' });
   },
 
+  summonHero: async () => {
+    const state = get();
+    const cost = 100;
+    if (state.gems < cost) return {};
+    const locked = Object.values(state.heroes).filter((h) => !h.unlocked);
+    if (locked.length === 0) {
+      // All unlocked: convert into either gold, gems, or random shards.
+      const r = Math.random();
+      if (r < 0.4) {
+        const gold = 500 + Math.floor(Math.random() * 500);
+        set({ gems: state.gems - cost, gold: state.gold + gold });
+        persist(get());
+        return { reward: { kind: 'gold', value: gold } };
+      } else if (r < 0.7) {
+        const gems = 30 + Math.floor(Math.random() * 40);
+        set({ gems: state.gems - cost + gems });
+        persist(get());
+        return { reward: { kind: 'gems', value: gems } };
+      } else {
+        const ids = Object.keys(state.equipment);
+        const id = ids[Math.floor(Math.random() * ids.length)];
+        const eq = state.equipment[id];
+        const shards = 5 + Math.floor(Math.random() * 8);
+        set({
+          gems: state.gems - cost,
+          equipment: { ...state.equipment, [id]: { ...eq, shards: eq.shards + shards } },
+        });
+        persist(get());
+        return { reward: { kind: 'shards', value: shards } };
+      }
+    }
+    // Weighted by inverse rarity: common 50, rare 30, epic 15, legendary 4, mythic 1.
+    const rarityWeight: Record<string, number> = {
+      common: 50, rare: 30, epic: 15, legendary: 4, mythic: 1,
+    };
+    const weighted: Array<{ id: string; weight: number }> = locked.map((h) => ({
+      id: h.id, weight: rarityWeight[h.rarity] ?? 10,
+    }));
+    const totalWeight = weighted.reduce((s, w) => s + w.weight, 0);
+    let roll = Math.random() * totalWeight;
+    let pickedId = weighted[0].id;
+    for (const w of weighted) {
+      if (roll < w.weight) { pickedId = w.id; break; }
+      roll -= w.weight;
+    }
+    set({
+      gems: state.gems - cost,
+      heroes: { ...state.heroes, [pickedId]: { ...state.heroes[pickedId], unlocked: true } },
+    });
+    persist(get());
+    return { heroId: pickedId };
+  },
+
   setBattleSpeed: (s) => { set({ battleSpeed: s }); persist(get()); },
 
   hydrate: async () => {
@@ -1139,15 +1196,16 @@ export function getHeroEffectiveStats(heroId: string, store: GameStore): Effecti
   }
 
   const starMul = 1 + hero.stars * 0.05;
+  const mile = computeMilestoneBonuses(hero.kills ?? 0, hero.battlesUsed ?? 0);
 
   const pre: HeroStats = {
-    hp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp) * starMul),
-    maxHp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp) * starMul),
-    attack: Math.round((hero.baseStats.attack + sumBonus('attack') + setAttack) * starMul),
-    defense: Math.round((hero.baseStats.defense + sumBonus('defense') + setDefense) * starMul),
+    hp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * starMul),
+    maxHp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * starMul),
+    attack: Math.round((hero.baseStats.attack + sumBonus('attack') + setAttack + mile.attack) * starMul),
+    defense: Math.round((hero.baseStats.defense + sumBonus('defense') + setDefense + mile.defense) * starMul),
     speed: hero.baseStats.speed + sumBonus('speed'),
     range: hero.baseStats.range,
-    critRate: Math.min(0.85, hero.baseStats.critRate + sumBonus('critRate') + setCrit),
+    critRate: Math.min(0.85, hero.baseStats.critRate + sumBonus('critRate') + setCrit + mile.critRate),
     critDamage: hero.baseStats.critDamage + sumBonus('critDamage'),
     dodge: Math.min(0.6, hero.baseStats.dodge + sumBonus('dodge') + setDodge),
     maxMana: hero.baseStats.maxMana + sumBonus('maxMana'),

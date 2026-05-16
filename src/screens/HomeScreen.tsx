@@ -54,6 +54,7 @@ export default function HomeScreen() {
         <MenuButton icon="🔨" label="FORGE" sub="Upgrade gear with shards" onPress={() => setScreen('forge')} color="#e67e22" />
         <MenuButton icon="🏪" label="SHOP" sub="Buy gear with gold or gems" onPress={() => setScreen('shop')} color="#f1c40f" />
         <MenuButton icon="📦" label="CHESTS" sub="Roll for random loot · 4 chest tiers" onPress={() => setScreen('chests')} color="#e84393" />
+        <MenuButton icon="🔮" label="SUMMON" sub="Pull random heroes with gems" onPress={() => setScreen('summon')} color="#bb8fce" />
         <MenuButton icon="🏰" label="STRONGHOLD" sub="Permanent base upgrades · global bonuses" onPress={() => setScreen('stronghold')} color="#f39c12" />
         <MenuButton icon="📖" label="CODEX" sub="Heroes, enemies, classes, abilities" onPress={() => setScreen('codex')} color="#16a085" />
         <MenuButton icon="⚙️" label="SETTINGS" sub="Battle speed, particles, motion" onPress={() => setScreen('settings')} color="#7c83fd" />

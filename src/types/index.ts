@@ -277,7 +277,8 @@ export type Screen =
   | 'codex'
   | 'chests'
   | 'stronghold'
-  | 'settings';
+  | 'settings'
+  | 'summon';
 
 export interface Achievement {
   id: string;

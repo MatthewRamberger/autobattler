@@ -8,6 +8,7 @@ import { RARITY_COLORS } from '../data/equipment';
 import { CLASS_COLORS, CLASS_DESCRIPTIONS } from '../data/heroes';
 import { ABILITIES } from '../data/abilities';
 import { TALENTS, TALENT_UNLOCK_LEVELS, availableTalentTier } from '../data/talents';
+import { KILL_MILESTONES, BATTLE_MILESTONES, nextKillMilestone, nextBattleMilestone } from '../data/milestones';
 import StatBar from '../components/StatBar';
 import EquipmentCard from '../components/EquipmentCard';
 import HeroPortrait from '../components/HeroPortrait';
@@ -227,6 +228,46 @@ export default function CollectionScreen() {
                   </TouchableOpacity>
                 </View>
 
+                {/* Milestones */}
+                <Text style={styles.sectionTitle}>
+                  MILESTONES · ⚔ {selectedHero.kills ?? 0} kills · 🛡 {selectedHero.battlesUsed ?? 0} battles
+                </Text>
+                <View style={styles.milestoneRow}>
+                  {KILL_MILESTONES.map((m, idx) => {
+                    const done = (selectedHero.kills ?? 0) >= m.threshold;
+                    return (
+                      <View key={`k${idx}`} style={[styles.milestone, done && styles.milestoneDone]}>
+                        <Text style={[styles.milestoneText, done && { color: '#27ae60' }]}>
+                          {m.threshold}⚔
+                        </Text>
+                        <Text style={styles.milestoneEffect}>
+                          +{m.attackBonus} atk{m.critRateBonus ? ` +${Math.round((m.critRateBonus ?? 0) * 100)}% crit` : ''}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+                <View style={styles.milestoneRow}>
+                  {BATTLE_MILESTONES.map((m, idx) => {
+                    const done = (selectedHero.battlesUsed ?? 0) >= m.threshold;
+                    return (
+                      <View key={`b${idx}`} style={[styles.milestone, done && styles.milestoneDone]}>
+                        <Text style={[styles.milestoneText, done && { color: '#27ae60' }]}>
+                          {m.threshold}🛡
+                        </Text>
+                        <Text style={styles.milestoneEffect}>
+                          +{m.hpBonus} hp{m.defenseBonus ? ` +${m.defenseBonus} def` : ''}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+                {nextKillMilestone(selectedHero.kills ?? 0) && (
+                  <Text style={styles.milestoneNext}>
+                    Next ⚔: {(selectedHero.kills ?? 0)} / {nextKillMilestone(selectedHero.kills ?? 0)!.threshold}
+                  </Text>
+                )}
+
                 {/* Talents */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Text style={styles.sectionTitle}>TALENTS · {availableTalentTier(selectedHero.level)}/4 unlocked</Text>
@@ -438,4 +479,10 @@ const styles = StyleSheet.create({
   talentLocked: { opacity: 0.4 },
   talentName: { color: '#fff', fontSize: 10, fontWeight: '700' },
   talentDesc: { color: '#888', fontSize: 9, marginTop: 2, lineHeight: 11 },
+  milestoneRow: { flexDirection: 'row', gap: 4, marginVertical: 3 },
+  milestone: { flex: 1, backgroundColor: '#1e1e2e', borderRadius: 6, padding: 4, alignItems: 'center', borderWidth: 1, borderColor: '#2a2a3e' },
+  milestoneDone: { backgroundColor: '#0d2a0d', borderColor: '#27ae60' },
+  milestoneText: { color: '#666', fontSize: 10, fontWeight: '700' },
+  milestoneEffect: { color: '#888', fontSize: 8, marginTop: 1 },
+  milestoneNext: { color: '#666', fontSize: 9, marginTop: 4 },
 });
