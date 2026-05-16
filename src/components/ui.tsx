@@ -160,9 +160,9 @@ export function SectionTitle({ children, style }: { children: React.ReactNode; s
 // ----------------------------------------------------------------
 // Gradient tag (difficulty / rarity)
 // ----------------------------------------------------------------
-export function Tag({ label, colors, small }: { label: string; colors: readonly [string, string]; small?: boolean }) {
+export function Tag({ label, colors, small }: { label: string; colors: readonly string[]; small?: boolean }) {
   return (
-    <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[uiStyles.tag, small && { paddingHorizontal: 6, paddingVertical: 2 }]}>
+    <LinearGradient colors={colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[uiStyles.tag, small && { paddingHorizontal: 6, paddingVertical: 2 }]}>
       <Text style={[uiStyles.tagText, small && { fontSize: 8 }]}>{label}</Text>
     </LinearGradient>
   );
@@ -172,12 +172,12 @@ export function Tag({ label, colors, small }: { label: string; colors: readonly 
 // Progress bar with gradient fill
 // ----------------------------------------------------------------
 export function Bar({
-  pct, colors = ['#5ed36a', '#2c9c3a'] as const, height = 10, track = palette.trackBg, style,
-}: { pct: number; colors?: readonly [string, string]; height?: number; track?: string; style?: StyleProp<ViewStyle> }) {
+  pct, colors = ['#5ed36a', '#2c9c3a'], height = 10, track = palette.trackBg, style,
+}: { pct: number; colors?: readonly string[]; height?: number; track?: string; style?: StyleProp<ViewStyle> }) {
   const w = Math.max(0, Math.min(1, Number.isFinite(pct) ? pct : 0));
   return (
     <View style={[{ height, backgroundColor: track, borderRadius: height, overflow: 'hidden', borderWidth: 1, borderColor: '#0006' }, style]}>
-      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ width: `${w * 100}%`, height: '100%' }} />
+      <LinearGradient colors={colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ width: `${w * 100}%`, height: '100%' }} />
     </View>
   );
 }
