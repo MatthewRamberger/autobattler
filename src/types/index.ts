@@ -275,7 +275,9 @@ export type Screen =
   | 'daily'
   | 'stats'
   | 'codex'
-  | 'chests';
+  | 'chests'
+  | 'stronghold'
+  | 'settings';
 
 export interface Achievement {
   id: string;
@@ -336,4 +338,14 @@ export interface GameState {
 
   // Up to 3 saved team compositions (name -> placement map)
   loadouts: Record<string, { name: string; placements: Record<string, GridPosition> }>;
+
+  // Stronghold building levels (per-building 0..maxLevel)
+  stronghold: Record<string, number>;
+
+  // User settings
+  settings: {
+    particles: boolean;
+    reduceMotion: boolean;
+    autoFastForward: boolean;
+  };
 }

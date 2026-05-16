@@ -10,6 +10,10 @@ import { ACHIEVEMENTS } from '../data/achievements';
 import { ABILITIES } from '../data/abilities';
 import { rollDailyQuests } from '../data/dailyQuests';
 import { applyTalentBonuses, availableTalentTier, TALENTS } from '../data/talents';
+import {
+  STRONGHOLD_BUILDINGS, strongholdGoldMultiplier, strongholdExpMultiplier,
+  strongholdShardBonus,
+} from '../data/stronghold';
 
 const SAVE_KEY = '@autobattler/save_v2';
 
@@ -71,6 +75,15 @@ interface GameStore extends GameState {
   // Equipment dismantle: convert N copies of an item into shards.
   dismantleEquipment: (id: string, qty: number) => void;
 
+  // Stronghold building upgrades.
+  upgradeStronghold: (buildingId: string) => void;
+
+  // User-tweakable settings.
+  updateSettings: (patch: Partial<GameState['settings']>) => void;
+
+  // Quick fight: re-use last loadout for the given level.
+  quickFight: (levelId: number) => void;
+
   // Mystery chest: roll a weighted reward.
   openMysteryChest: (rarity: 'wooden' | 'silver' | 'gold' | 'mythic') => Promise<{ items: { id: string; qty: number }[]; gold: number; gems: number }>;
 
@@ -117,6 +130,8 @@ const INITIAL_STATE: GameState = {
   loginStreak: 0,
   lastLoginDay: 0,
   loadouts: {},
+  stronghold: {},
+  settings: { particles: true, reduceMotion: false, autoFastForward: false },
 };
 
 function generateShop(): ShopItem[] {
@@ -335,10 +350,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const killsPerHero = heroIds.length > 0 ? Math.floor(stats.kills / heroIds.length) : 0;
     const extraKills = heroIds.length > 0 ? stats.kills - killsPerHero * heroIds.length : 0;
     let extraIdx = 0;
+    const expMul = strongholdExpMultiplier(state.stronghold);
+    const adjustedExp = Math.round(exp * expMul);
     for (const heroId of heroIds) {
       const hero = updatedHeroes[heroId];
       if (!hero) continue;
-      let newExp = hero.experience + exp;
+      let newExp = hero.experience + adjustedExp;
       let lvl = hero.level;
       let expNext = hero.experienceToNext;
       let baseStats = hero.baseStats;
@@ -375,11 +392,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (won) {
       const ids = Object.keys(updatedEquipment);
       const dropCount = 2 + Math.floor(Math.random() * 2);
+      const bonusShards = strongholdShardBonus(state.stronghold);
       for (let i = 0; i < dropCount; i++) {
         const id = ids[Math.floor(Math.random() * ids.length)];
         const eq = updatedEquipment[id];
         if (!eq) continue;
-        updatedEquipment[id] = { ...eq, shards: eq.shards + (1 + Math.floor(Math.random() * 3)) };
+        updatedEquipment[id] = { ...eq, shards: eq.shards + (1 + Math.floor(Math.random() * 3)) + bonusShards };
       }
     }
 
@@ -418,8 +436,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     bumpDaily('daily_damage', stats.damage);
     bumpDaily('daily_kills', stats.kills);
 
+    // Stronghold multipliers
+    const goldMul = strongholdGoldMultiplier(state.stronghold);
+    const finalGold = Math.round((won ? gold : Math.floor(gold * 0.25)) * goldMul);
+
     set({
-      gold: state.gold + (won ? gold : Math.floor(gold * 0.25)),
+      gold: state.gold + finalGold,
       gems: state.gems + (won ? 2 : 0),
       heroes: updatedHeroes,
       equipment: updatedEquipment,
@@ -954,6 +976,46 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return { items, gold: bonusGold, gems: bonusGems };
   },
 
+  upgradeStronghold: (buildingId) => {
+    const state = get();
+    const def = STRONGHOLD_BUILDINGS.find((b) => b.id === buildingId);
+    if (!def) return;
+    const lvl = state.stronghold[buildingId] ?? 0;
+    if (lvl >= def.maxLevel) return;
+    const cost = def.costFor(lvl);
+    if (state.gold < cost.gold) return;
+    if (cost.gems && state.gems < cost.gems) return;
+    set({
+      gold: state.gold - cost.gold,
+      gems: state.gems - (cost.gems ?? 0),
+      stronghold: { ...state.stronghold, [buildingId]: lvl + 1 },
+    });
+    persist(get());
+  },
+
+  updateSettings: (patch) => {
+    const state = get();
+    set({ settings: { ...state.settings, ...patch } });
+    persist(get());
+  },
+
+  quickFight: (levelId) => {
+    const state = get();
+    if (Object.keys(state.placedHeroes).length === 0) {
+      const lo = state.loadouts['slot_1'] ?? Object.values(state.loadouts)[0];
+      if (lo) {
+        const placements: Record<string, GridPosition> = {};
+        for (const [hid, pos] of Object.entries(lo.placements)) {
+          if (state.heroes[hid]?.unlocked) placements[hid] = pos;
+        }
+        set({ placedHeroes: placements });
+      } else {
+        get().autoPlace();
+      }
+    }
+    set({ currentLevelId: levelId, currentScreen: 'battle' });
+  },
+
   setBattleSpeed: (s) => { set({ battleSpeed: s }); persist(get()); },
 
   hydrate: async () => {
@@ -1030,6 +1092,8 @@ function persist(state: GameState) {
       loginStreak: state.loginStreak,
       lastLoginDay: state.lastLoginDay,
       loadouts: state.loadouts,
+      stronghold: state.stronghold,
+      settings: state.settings,
     };
     AsyncStorage.setItem(SAVE_KEY, JSON.stringify(toSave)).catch(() => {});
   }, 250);

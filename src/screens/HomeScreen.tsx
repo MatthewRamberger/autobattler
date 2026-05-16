@@ -54,7 +54,9 @@ export default function HomeScreen() {
         <MenuButton icon="🔨" label="FORGE" sub="Upgrade gear with shards" onPress={() => setScreen('forge')} color="#e67e22" />
         <MenuButton icon="🏪" label="SHOP" sub="Buy gear with gold or gems" onPress={() => setScreen('shop')} color="#f1c40f" />
         <MenuButton icon="📦" label="CHESTS" sub="Roll for random loot · 4 chest tiers" onPress={() => setScreen('chests')} color="#e84393" />
+        <MenuButton icon="🏰" label="STRONGHOLD" sub="Permanent base upgrades · global bonuses" onPress={() => setScreen('stronghold')} color="#f39c12" />
         <MenuButton icon="📖" label="CODEX" sub="Heroes, enemies, classes, abilities" onPress={() => setScreen('codex')} color="#16a085" />
+        <MenuButton icon="⚙️" label="SETTINGS" sub="Battle speed, particles, motion" onPress={() => setScreen('settings')} color="#7c83fd" />
         <MenuButton icon="📅" label="DAILY" sub={`Streak 🔥 ${loginStreak} · ${claimableQuests} ready to claim`} onPress={() => setScreen('daily')} color="#e67e22" badge={claimableQuests} />
         <MenuButton icon="🏆" label="ACHIEVEMENTS" sub="Claim milestone rewards" onPress={() => setScreen('achievements')} color="#bb8fce" badge={claimableAchievements} />
         <MenuButton icon="📊" label="STATS" sub="Lifetime progress & top heroes" onPress={() => setScreen('stats')} color="#7c83fd" />

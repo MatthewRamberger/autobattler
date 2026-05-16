@@ -16,6 +16,8 @@ import DailyScreen from './src/screens/DailyScreen';
 import StatsScreen from './src/screens/StatsScreen';
 import CodexScreen from './src/screens/CodexScreen';
 import ChestScreen from './src/screens/ChestScreen';
+import StrongholdScreen from './src/screens/StrongholdScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
 
 export default function App() {
   const { currentScreen, hydrated, hydrate } = useGameStore();
@@ -49,6 +51,8 @@ export default function App() {
       case 'stats': return <StatsScreen />;
       case 'codex': return <CodexScreen />;
       case 'chests': return <ChestScreen />;
+      case 'stronghold': return <StrongholdScreen />;
+      case 'settings': return <SettingsScreen />;
       default: return <HomeScreen />;
     }
   }

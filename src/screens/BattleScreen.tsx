@@ -70,6 +70,7 @@ export default function BattleScreen() {
 
   const [phase, setPhase] = useState<'idle' | 'running' | 'paused' | 'done'>('idle');
   const [log, setLog] = useState<BattleLogEntry[]>([]);
+  const [logFilter, setLogFilter] = useState<'all' | 'crits' | 'heals' | 'abilities' | 'deaths'>('all');
   const [liveUnits, setLiveUnits] = useState<LiveUnit[]>([]);
   const [vfxNumbers, setVfxNumbers] = useState<VfxNumber[]>([]);
   const [projectiles, setProjectiles] = useState<Projectile[]>([]);
@@ -112,10 +113,11 @@ export default function BattleScreen() {
         }))
       : buildArenaEnemies();
 
+    const sanctumMana = (store.stronghold['sanctum'] ?? 0) * 8;
     const playerUnits: BattleUnit[] = Object.entries(placedHeroes).map(([heroId, pos]) => {
       const hero = heroes[heroId];
       const stats = getHeroEffectiveStats(heroId, store)!;
-      return buildPlayerUnit({
+      const u = buildPlayerUnit({
         heroId, name: hero.name, heroClass: hero.heroClass,
         maxHp: stats.maxHp, attack: stats.attack, defense: stats.defense,
         speed: stats.speed, range: stats.range,
@@ -125,6 +127,8 @@ export default function BattleScreen() {
         position: pos, icon: hero.icon, portraitSeed: hero.portraitSeed,
         stars: hero.stars, abilityId: hero.abilityId,
       });
+      u.mana = Math.min(u.maxMana, u.mana + sanctumMana);
+      return u;
     });
 
     // Build extra waves if the level defines them.
@@ -214,16 +218,17 @@ export default function BattleScreen() {
         if (ev.targetId) {
           updateUnit(ev.targetId, (u) => {
             const newHp = Math.max(0, u.hp - (ev.value ?? 0));
-            // Shake + flash
-            Animated.sequence([
-              Animated.timing(u.shake, { toValue: 7, duration: 50, useNativeDriver: true }),
-              Animated.timing(u.shake, { toValue: -7, duration: 50, useNativeDriver: true }),
-              Animated.timing(u.shake, { toValue: 0, duration: 50, useNativeDriver: true }),
-            ]).start();
-            Animated.sequence([
-              Animated.timing(u.flash, { toValue: 1, duration: 60, useNativeDriver: false }),
-              Animated.timing(u.flash, { toValue: 0, duration: 220, useNativeDriver: false }),
-            ]).start();
+            if (!store.settings.reduceMotion) {
+              Animated.sequence([
+                Animated.timing(u.shake, { toValue: 7, duration: 50, useNativeDriver: true }),
+                Animated.timing(u.shake, { toValue: -7, duration: 50, useNativeDriver: true }),
+                Animated.timing(u.shake, { toValue: 0, duration: 50, useNativeDriver: true }),
+              ]).start();
+              Animated.sequence([
+                Animated.timing(u.flash, { toValue: 1, duration: 60, useNativeDriver: false }),
+                Animated.timing(u.flash, { toValue: 0, duration: 220, useNativeDriver: false }),
+              ]).start();
+            }
             return { ...u, hp: newHp };
           });
           spawnFloating(ev.targetId, `-${ev.value}`, ev.element ? ELEMENT_COLORS[ev.element] : '#e74c3c', 16);
@@ -325,6 +330,7 @@ export default function BattleScreen() {
   }
 
   function spawnFloating(unitId: string, text: string, color: string, fontSize?: number) {
+    if (!store.settings.particles) return;
     const id = `${unitId}_${Math.random()}`;
     setVfxNumbers((prev) => [...prev, { id, unitId, text, color, fontSize }]);
     setTimeout(() => {
@@ -333,6 +339,7 @@ export default function BattleScreen() {
   }
 
   function launchProjectile(from: GridPosition, to: GridPosition, element: Element) {
+    if (!store.settings.particles) return;
     const id = `proj_${Math.random()}`;
     const anim = new Animated.Value(0);
     setProjectiles((prev) => [...prev, { id, from, to, element, anim }]);
@@ -492,9 +499,31 @@ export default function BattleScreen() {
 
       {/* Battle log */}
       <View style={styles.logContainer}>
-        <Text style={styles.logTitle}>BATTLE LOG</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text style={styles.logTitle}>BATTLE LOG</Text>
+          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'flex-end', gap: 2 }}>
+            {(['all', 'crits', 'heals', 'abilities', 'deaths'] as const).map((f) => (
+              <TouchableOpacity
+                key={f}
+                style={[styles.logFilterBtn, logFilter === f && styles.logFilterActive]}
+                onPress={() => setLogFilter(f)}
+              >
+                <Text style={[styles.logFilterText, logFilter === f && styles.logFilterTextActive]}>
+                  {f === 'all' ? 'ALL' : f.toUpperCase().slice(0, 3)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
         <ScrollView ref={logScrollRef} style={styles.log} showsVerticalScrollIndicator={false}>
-          {log.map((entry, idx) => (
+          {log.filter((e) => {
+            if (logFilter === 'all') return true;
+            if (logFilter === 'crits') return e.type === 'crit';
+            if (logFilter === 'heals') return e.type === 'heal';
+            if (logFilter === 'abilities') return e.type === 'ability';
+            if (logFilter === 'deaths') return e.type === 'death' || e.type === 'victory' || e.type === 'defeat';
+            return true;
+          }).map((entry, idx) => (
             <Text
               key={idx}
               style={[
@@ -775,6 +804,10 @@ const styles = StyleSheet.create({
   divider: { width: 1, backgroundColor: '#1e1e2e', marginHorizontal: 8 },
   logContainer: { flex: 1, borderTopWidth: 1, borderTopColor: '#1e1e2e', padding: 10 },
   logTitle: { color: '#555', fontSize: 9, fontWeight: '700', letterSpacing: 2, marginBottom: 6 },
+  logFilterBtn: { paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4, backgroundColor: '#1a1a2a', borderWidth: 1, borderColor: '#333' },
+  logFilterActive: { borderColor: '#7c83fd', backgroundColor: '#7c83fd22' },
+  logFilterText: { color: '#666', fontSize: 8, fontWeight: '700' },
+  logFilterTextActive: { color: '#7c83fd' },
   log: { flex: 1 },
   logEntry: { color: '#777', fontSize: 11, marginBottom: 3, lineHeight: 15 },
   logDeath: { color: '#e74c3c' },

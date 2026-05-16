@@ -5,7 +5,7 @@ import { LEVELS, DIFFICULTY_COLORS } from '../data/levels';
 import HeroPortrait from '../components/HeroPortrait';
 
 export default function LevelsScreen() {
-  const { setScreen, levelProgress, setCurrentLevel, autoResolveLevel, placedHeroes, autoPlace } = useGameStore();
+  const { setScreen, levelProgress, setCurrentLevel, autoResolveLevel, placedHeroes, autoPlace, quickFight } = useGameStore();
   const [grinding, setGrinding] = useState<number | null>(null);
 
   function handleSelectLevel(levelId: number) {
@@ -115,6 +115,12 @@ export default function LevelsScreen() {
                         {grinding === level.id ? '…' : '×5'}
                       </Text>
                     </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={(e) => { e.stopPropagation?.(); quickFight(level.id); }}
+                      style={styles.quickBtn}
+                    >
+                      <Text style={styles.quickText}>⚡</Text>
+                    </TouchableOpacity>
                   </>
                 ) : isLocked ? (
                   <Text style={styles.lockIcon}>🔒</Text>
@@ -163,4 +169,6 @@ const styles = StyleSheet.create({
   playBtn: { color: '#27ae60', fontSize: 22, fontWeight: '700' },
   autoBtn: { marginTop: 4, backgroundColor: '#e67e2233', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: '#e67e22' },
   autoText: { color: '#e67e22', fontSize: 10, fontWeight: '800' },
+  quickBtn: { marginTop: 4, backgroundColor: '#27ae6033', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: '#27ae60' },
+  quickText: { color: '#27ae60', fontSize: 12, fontWeight: '800' },
 });
