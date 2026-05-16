@@ -1,0 +1,100 @@
+name: PR Build Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  typecheck:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+  build-debug:
+    name: Debug APK (dry run)
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The ubuntu-latest runner has Android SDK pre-installed at $ANDROID_HOME
+      # with platform-35, build-tools-35.0.0, and NDK 27.3.13750724 already present.
+      # We just need to accept any pending licenses.
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null 2>&1 || true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      # Gradle toolchain auto-detection doesn't scan /opt/hostedtoolcache (where
+      # actions/setup-java installs JDKs). The react-native settings-plugin declares
+      # jvmToolchain(17), so without this Gradle falls back to foojay.io which is
+      # network-blocked. Write $JAVA_HOME to the user-level gradle.properties so
+      # the path is visible to all included builds (project-level gradle.properties
+      # is not read by sub-builds).
+      - name: Configure Gradle Java 17 toolchain path
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.java.installations.paths=$JAVA_HOME" >> ~/.gradle/gradle.properties
+
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      # Restrict to arm64-v8a only in CI — building all 4 archs is slow and
+      # unnecessary for a build validation check.
+      - name: Build debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon --stacktrace \
+            -PreactNativeArchitectures=arm64-v8a \
+            2>&1 | tee /tmp/gradle-build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload Gradle log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log-pr${{ github.event.pull_request.number }}
+          path: /tmp/gradle-build.log
+          retention-days: 3
+          if-no-files-found: warn
+
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autobattler-debug-pr${{ github.event.pull_request.number }}
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
