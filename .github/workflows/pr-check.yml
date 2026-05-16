@@ -77,6 +77,9 @@ jobs:
           sed -i '/compileOnly("com.android.tools.build:gradle:8.5.0")/d' \
             node_modules/expo-modules-autolinking/android/expo-gradle-plugin/expo-autolinking-plugin/build.gradle.kts
 
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
