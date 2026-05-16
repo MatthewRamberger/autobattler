@@ -17,6 +17,9 @@ allprojects {
     google()
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
+    // @react-native-async-storage/async-storage 3.0.x ships the storage-android
+    // AAR in a bundled local maven repo but does not auto-register it.
+    maven { url("${rootDir}/../node_modules/@react-native-async-storage/async-storage/android/local_repo") }
   }
 }
 
