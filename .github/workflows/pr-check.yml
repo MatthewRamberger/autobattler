@@ -55,6 +55,17 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
+      # Gradle toolchain auto-detection doesn't scan /opt/hostedtoolcache (where
+      # actions/setup-java installs JDKs). The react-native settings-plugin declares
+      # jvmToolchain(17), so without this Gradle falls back to foojay.io which is
+      # network-blocked. Write $JAVA_HOME to the user-level gradle.properties so
+      # the path is visible to all included builds (project-level gradle.properties
+      # is not read by sub-builds).
+      - name: Configure Gradle Java 17 toolchain path
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.java.installations.paths=$JAVA_HOME" >> ~/.gradle/gradle.properties
+
       - name: Expo prebuild
         run: npx expo prebuild --platform android --no-install
 
