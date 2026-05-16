@@ -55,6 +55,17 @@ jobs:
           mkdir -p ~/.gradle
           echo "org.gradle.java.installations.paths=$JAVA_HOME" >> ~/.gradle/gradle.properties
 
+      # expo-modules-autolinking 3.0.25 declares compileOnly AGP 8.5.0 in two
+      # gradle plugin build scripts but no source file imports any AGP class —
+      # the dependency is unused and causes a 403 from dl.google.com on some
+      # network configurations. Remove it so Gradle doesn't try to download it.
+      - name: Patch expo-autolinking AGP compileOnly
+        run: |
+          sed -i '/compileOnly("com.android.tools.build:gradle:8.5.0")/d' \
+            node_modules/expo-modules-autolinking/android/expo-gradle-plugin/expo-autolinking-settings-plugin/build.gradle.kts
+          sed -i '/compileOnly("com.android.tools.build:gradle:8.5.0")/d' \
+            node_modules/expo-modules-autolinking/android/expo-gradle-plugin/expo-autolinking-plugin/build.gradle.kts
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
