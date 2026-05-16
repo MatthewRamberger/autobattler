@@ -90,38 +90,6 @@ jobs:
             2>&1 | tee /tmp/gradle-build.log
           exit ${PIPESTATUS[0]}
 
-      - name: Post Gradle log as PR comment
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          python3 - <<'PYEOF'
-import json, os, subprocess, sys
-log_path = '/tmp/gradle-build.log'
-if os.path.exists(log_path):
-    with open(log_path) as f:
-        log = f.read()[-6000:]
-else:
-    log = 'Log file not found'
-body = '**Gradle build log:**\n```\n' + log + '\n```'
-payload = json.dumps({'body': body})
-pr = os.environ['PR_NUMBER']
-repo = os.environ['REPO']
-token = os.environ['GH_TOKEN']
-r = subprocess.run([
-    'curl', '-sf', '-X', 'POST',
-    '-H', f'Authorization: token {token}',
-    '-H', 'Content-Type: application/json',
-    f'https://api.github.com/repos/{repo}/issues/{pr}/comments',
-    '-d', payload
-], capture_output=True, text=True)
-print(r.stdout)
-if r.returncode != 0:
-    print('curl failed:', r.stderr, file=sys.stderr)
-PYEOF
-
       - name: Upload Gradle log
         if: always()
         uses: actions/upload-artifact@v4
