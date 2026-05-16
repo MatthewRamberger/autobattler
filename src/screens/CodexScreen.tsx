@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, getHeroEffectiveStats } from '../store/gameStore';
 import { LEVELS } from '../data/levels';
 import { ABILITIES } from '../data/abilities';
 import { CLASS_COLORS, CLASS_DESCRIPTIONS } from '../data/heroes';
 import { RARITY_COLORS } from '../data/equipment';
 import HeroPortrait from '../components/HeroPortrait';
 
-type Tab = 'heroes' | 'enemies' | 'classes' | 'abilities';
+type Tab = 'heroes' | 'enemies' | 'classes' | 'abilities' | 'compare';
 
 export default function CodexScreen() {
-  const { setScreen, heroes } = useGameStore();
+  const store = useGameStore();
+  const { setScreen, heroes } = store;
   const [tab, setTab] = useState<Tab>('heroes');
+  const [compareA, setCompareA] = useState<string | null>(null);
+  const [compareB, setCompareB] = useState<string | null>(null);
 
   // Build enemy roster across all levels (deduped by name).
   const enemyMap: Record<string, { name: string; heroClass: string; icon: string; element?: string; maxLevel: number; appearsIn: string[] }> = {};
@@ -40,9 +43,9 @@ export default function CodexScreen() {
       </View>
 
       <View style={styles.tabRow}>
-        {(['heroes', 'enemies', 'classes', 'abilities'] as Tab[]).map((t) => (
+        {(['heroes', 'enemies', 'classes', 'abilities', 'compare'] as Tab[]).map((t) => (
           <TouchableOpacity key={t} style={[styles.tab, tab === t && styles.tabActive]} onPress={() => setTab(t)}>
-            <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t.toUpperCase()}</Text>
+            <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t.slice(0, 4).toUpperCase()}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -113,10 +116,102 @@ export default function CodexScreen() {
             </View>
           </View>
         ))}
+
+        {tab === 'compare' && (
+          <CompareTab
+            heroes={heroes}
+            store={store}
+            a={compareA} b={compareB}
+            setA={setCompareA} setB={setCompareB}
+          />
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+function CompareTab({ heroes, store, a, b, setA, setB }: any) {
+  const unlocked = Object.values(heroes).filter((h: any) => h.unlocked);
+  const heroA = a ? heroes[a] : null;
+  const heroB = b ? heroes[b] : null;
+  const statsA = heroA ? getHeroEffectiveStats(heroA.id, store) : null;
+  const statsB = heroB ? getHeroEffectiveStats(heroB.id, store) : null;
+
+  return (
+    <View>
+      <Text style={compareStyles.label}>HERO A</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={compareStyles.picker}>
+        {unlocked.map((h: any) => (
+          <TouchableOpacity key={h.id} onPress={() => setA(h.id === a ? null : h.id)} style={[compareStyles.pickerItem, a === h.id && compareStyles.picked]}>
+            <HeroPortrait size={42} heroClass={h.heroClass} rarity={h.rarity} icon={h.icon} element={h.baseStats.element} seed={h.portraitSeed} showFrame={false} />
+            <Text style={compareStyles.pickerName}>{h.name}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+      <Text style={compareStyles.label}>HERO B</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={compareStyles.picker}>
+        {unlocked.map((h: any) => (
+          <TouchableOpacity key={h.id} onPress={() => setB(h.id === b ? null : h.id)} style={[compareStyles.pickerItem, b === h.id && compareStyles.picked]}>
+            <HeroPortrait size={42} heroClass={h.heroClass} rarity={h.rarity} icon={h.icon} element={h.baseStats.element} seed={h.portraitSeed} showFrame={false} />
+            <Text style={compareStyles.pickerName}>{h.name}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {statsA && statsB && (
+        <View style={compareStyles.compareCard}>
+          <View style={compareStyles.compareHeader}>
+            <Text style={[compareStyles.compareName, { color: '#27ae60' }]}>{heroA.name}</Text>
+            <Text style={compareStyles.vs}>vs</Text>
+            <Text style={[compareStyles.compareName, { color: '#3498db' }]}>{heroB.name}</Text>
+          </View>
+          {[
+            ['HP', statsA.maxHp, statsB.maxHp],
+            ['ATK', statsA.attack, statsB.attack],
+            ['DEF', statsA.defense, statsB.defense],
+            ['SPD', statsA.speed, statsB.speed],
+            ['CRIT%', Math.round(statsA.critRate * 100), Math.round(statsB.critRate * 100)],
+            ['DODGE%', Math.round(statsA.dodge * 100), Math.round(statsB.dodge * 100)],
+            ['MP', statsA.maxMana, statsB.maxMana],
+            ['POWER', statsA.power, statsB.power],
+          ].map(([label, va, vb], i) => {
+            const aWin = (va as number) > (vb as number);
+            const bWin = (vb as number) > (va as number);
+            return (
+              <View key={i} style={compareStyles.compareRow}>
+                <Text style={[compareStyles.colA, aWin && compareStyles.winA]}>{va}</Text>
+                <Text style={compareStyles.colMid}>{label}</Text>
+                <Text style={[compareStyles.colB, bWin && compareStyles.winB]}>{vb}</Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+      {!statsA || !statsB ? (
+        <Text style={compareStyles.hint}>Pick two unlocked heroes to compare side-by-side.</Text>
+      ) : null}
+    </View>
+  );
+}
+
+const compareStyles = StyleSheet.create({
+  label: { color: '#555', fontSize: 10, letterSpacing: 2, marginTop: 8, marginBottom: 4 },
+  picker: { gap: 6 },
+  pickerItem: { alignItems: 'center', padding: 4, borderRadius: 6, borderWidth: 1, borderColor: 'transparent' },
+  picked: { borderColor: '#7c83fd' },
+  pickerName: { color: '#888', fontSize: 9, marginTop: 2, maxWidth: 50, textAlign: 'center' },
+  compareCard: { backgroundColor: '#1e1e2e', borderRadius: 12, padding: 12, marginTop: 12 },
+  compareHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  compareName: { fontSize: 14, fontWeight: '800', flex: 1, textAlign: 'center' },
+  vs: { color: '#444', fontSize: 11, paddingHorizontal: 8 },
+  compareRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#2a2a3e' },
+  colA: { color: '#aaa', fontSize: 14, fontWeight: '600', width: 60, textAlign: 'left' },
+  colMid: { color: '#666', fontSize: 11, flex: 1, textAlign: 'center' },
+  colB: { color: '#aaa', fontSize: 14, fontWeight: '600', width: 60, textAlign: 'right' },
+  winA: { color: '#27ae60', fontWeight: '900' },
+  winB: { color: '#3498db', fontWeight: '900' },
+  hint: { color: '#555', fontSize: 11, textAlign: 'center', padding: 20 },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a14' },

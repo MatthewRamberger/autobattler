@@ -791,12 +791,16 @@ const styles = StyleSheet.create({
   },
   abilityRing: {
     position: 'absolute', bottom: -2, left: -2,
-    width: 14, height: 14, borderRadius: 7,
+    width: 16, height: 16, borderRadius: 8,
     backgroundColor: '#000a',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: '#444',
   },
-  abilityReady: { borderColor: '#7c83fd', backgroundColor: '#7c83fdcc' },
+  abilityReady: {
+    borderColor: '#fff', backgroundColor: '#7c83fd',
+    shadowColor: '#7c83fd', shadowRadius: 6, shadowOpacity: 1, shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
+  },
   abilityIcon: { color: '#fff', fontSize: 8, fontWeight: '900' },
   unitStatusRow: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#1e1e2e', padding: 10, maxHeight: 150 },
   unitStatusSide: { flex: 1 },
