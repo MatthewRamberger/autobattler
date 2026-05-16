@@ -7,6 +7,7 @@ import { useGameStore, getHeroEffectiveStats } from '../store/gameStore';
 import { RARITY_COLORS } from '../data/equipment';
 import { CLASS_COLORS, CLASS_DESCRIPTIONS } from '../data/heroes';
 import { ABILITIES } from '../data/abilities';
+import { TALENTS, TALENT_UNLOCK_LEVELS, availableTalentTier } from '../data/talents';
 import StatBar from '../components/StatBar';
 import EquipmentCard from '../components/EquipmentCard';
 import HeroPortrait from '../components/HeroPortrait';
@@ -21,7 +22,7 @@ const UNLOCK_COSTS: Record<string, number> = {
 
 export default function CollectionScreen() {
   const store = useGameStore();
-  const { heroes, gold, gems, setScreen, unlockHero, levelUpHero, ascendHero, unequipItem, equipItem, toggleFavorite, autoEquipBest } = store;
+  const { heroes, gold, gems, setScreen, unlockHero, levelUpHero, ascendHero, unequipItem, equipItem, toggleFavorite, autoEquipBest, pickTalent, respecTalents } = store;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [equipTab, setEquipTab] = useState<'weapon' | 'armor' | 'accessory'>('weapon');
   const [filter, setFilter] = useState<'all' | 'unlocked' | 'favorite'>('all');
@@ -226,6 +227,54 @@ export default function CollectionScreen() {
                   </TouchableOpacity>
                 </View>
 
+                {/* Talents */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={styles.sectionTitle}>TALENTS · {availableTalentTier(selectedHero.level)}/4 unlocked</Text>
+                  <TouchableOpacity
+                    style={styles.respecBtn}
+                    onPress={() => {
+                      if (gems < 50) { Alert.alert('Not enough gems', 'Respec costs 50 gems.'); return; }
+                      respecTalents(selectedHero.id);
+                    }}
+                  >
+                    <Text style={styles.respecText}>↺ Respec (50💎)</Text>
+                  </TouchableOpacity>
+                </View>
+                {TALENT_UNLOCK_LEVELS.map((reqLvl, tier) => {
+                  const unlocked = selectedHero.level >= reqLvl;
+                  const options = TALENTS[selectedHero.heroClass]?.[tier] ?? [];
+                  const choice = selectedHero.talentChoices?.[tier] ?? -1;
+                  return (
+                    <View key={tier} style={styles.talentTier}>
+                      <Text style={styles.talentTierLabel}>
+                        TIER {tier + 1} {unlocked ? '' : `· Lv${reqLvl}`}
+                      </Text>
+                      <View style={styles.talentRow}>
+                        {options.map((opt, optIdx) => {
+                          const picked = choice === optIdx;
+                          return (
+                            <TouchableOpacity
+                              key={opt.id}
+                              disabled={!unlocked}
+                              style={[
+                                styles.talentBtn,
+                                picked && styles.talentPicked,
+                                !unlocked && styles.talentLocked,
+                              ]}
+                              onPress={() => pickTalent(selectedHero.id, tier, optIdx)}
+                            >
+                              <Text style={[styles.talentName, picked && { color: '#27ae60' }]}>
+                                {opt.name}
+                              </Text>
+                              <Text style={styles.talentDesc}>{opt.description}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  );
+                })}
+
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Text style={styles.sectionTitle}>EQUIPMENT</Text>
                   <TouchableOpacity
@@ -379,4 +428,14 @@ const styles = StyleSheet.create({
   noDetailText: { color: '#333', fontSize: 13, textAlign: 'center' },
   autoEquipBtn: { backgroundColor: '#3498db33', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: '#3498db' },
   autoEquipText: { color: '#3498db', fontSize: 10, fontWeight: '700' },
+  respecBtn: { backgroundColor: '#bb8fce33', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: '#bb8fce' },
+  respecText: { color: '#bb8fce', fontSize: 10, fontWeight: '700' },
+  talentTier: { marginVertical: 4 },
+  talentTierLabel: { color: '#666', fontSize: 9, letterSpacing: 1, marginBottom: 4 },
+  talentRow: { flexDirection: 'row', gap: 6 },
+  talentBtn: { flex: 1, backgroundColor: '#1e1e2e', borderRadius: 8, padding: 6, borderWidth: 1, borderColor: '#333' },
+  talentPicked: { borderColor: '#27ae60', backgroundColor: '#0d2a0d' },
+  talentLocked: { opacity: 0.4 },
+  talentName: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  talentDesc: { color: '#888', fontSize: 9, marginTop: 2, lineHeight: 11 },
 });

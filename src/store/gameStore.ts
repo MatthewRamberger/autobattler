@@ -9,6 +9,7 @@ import { EQUIPMENT, EQUIPMENT_SETS, MAX_FORGE_LEVEL, forgeShardsRequired } from 
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABILITIES } from '../data/abilities';
 import { rollDailyQuests } from '../data/dailyQuests';
+import { applyTalentBonuses, availableTalentTier, TALENTS } from '../data/talents';
 
 const SAVE_KEY = '@autobattler/save_v2';
 
@@ -61,6 +62,14 @@ interface GameStore extends GameState {
 
   // Auto-equip the best owned gear for a hero across all three slots.
   autoEquipBest: (heroId: string) => void;
+
+  // Talents: pick the chosen talent for a tier.
+  pickTalent: (heroId: string, tier: number, choice: number) => void;
+  // Talents: reset all picks for a hero (costs gems).
+  respecTalents: (heroId: string) => void;
+
+  // Equipment dismantle: convert N copies of an item into shards.
+  dismantleEquipment: (id: string, qty: number) => void;
 
   // Mystery chest: roll a weighted reward.
   openMysteryChest: (rarity: 'wooden' | 'silver' | 'gold' | 'mythic') => Promise<{ items: { id: string; qty: number }[]; gold: number; gems: number }>;
@@ -322,6 +331,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   applyBattleRewards: (won, gold, exp, heroIds, stats, itemDrop) => {
     const state = get();
     const updatedHeroes = { ...state.heroes };
+    // Distribute kills across the placed heroes evenly for stat tracking.
+    const killsPerHero = heroIds.length > 0 ? Math.floor(stats.kills / heroIds.length) : 0;
+    const extraKills = heroIds.length > 0 ? stats.kills - killsPerHero * heroIds.length : 0;
+    let extraIdx = 0;
     for (const heroId of heroIds) {
       const hero = updatedHeroes[heroId];
       if (!hero) continue;
@@ -343,7 +356,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
           maxMana: baseStats.maxMana + 1,
         };
       }
-      updatedHeroes[heroId] = { ...hero, level: lvl, experience: newExp, experienceToNext: expNext, baseStats };
+      const myKills = killsPerHero + (extraIdx++ < extraKills ? 1 : 0);
+      updatedHeroes[heroId] = {
+        ...hero, level: lvl, experience: newExp, experienceToNext: expNext, baseStats,
+        battlesUsed: (hero.battlesUsed ?? 0) + 1,
+        kills: (hero.kills ?? 0) + myKills,
+      };
     }
 
     const updatedEquipment = { ...state.equipment };
@@ -832,6 +850,54 @@ export const useGameStore = create<GameStore>((set, get) => ({
     persist(get());
   },
 
+  pickTalent: (heroId, tier, choice) => {
+    const state = get();
+    const hero = state.heroes[heroId];
+    if (!hero) return;
+    const unlocked = availableTalentTier(hero.level);
+    if (tier >= unlocked) return;
+    const tierOptions = TALENTS[hero.heroClass]?.[tier];
+    if (!tierOptions || choice < 0 || choice >= tierOptions.length) return;
+    const current = hero.talentChoices ?? [-1, -1, -1, -1];
+    if (current[tier] === choice) return;
+    const updated = [...current];
+    while (updated.length < 4) updated.push(-1);
+    updated[tier] = choice;
+    set({ heroes: { ...state.heroes, [heroId]: { ...hero, talentChoices: updated } } });
+    persist(get());
+  },
+
+  respecTalents: (heroId) => {
+    const state = get();
+    const hero = state.heroes[heroId];
+    if (!hero) return;
+    const cost = 50;
+    if (state.gems < cost) return;
+    set({
+      gems: state.gems - cost,
+      heroes: { ...state.heroes, [heroId]: { ...hero, talentChoices: [-1, -1, -1, -1] } },
+    });
+    persist(get());
+  },
+
+  dismantleEquipment: (id, qty) => {
+    const state = get();
+    const item = state.equipment[id];
+    if (!item || item.owned < qty || qty <= 0) return;
+    // Yield depends on rarity.
+    const rarityYield: Record<string, number> = {
+      common: 1, rare: 3, epic: 8, legendary: 20, mythic: 50,
+    };
+    const shards = (rarityYield[item.rarity] ?? 1) * qty;
+    set({
+      equipment: {
+        ...state.equipment,
+        [id]: { ...item, owned: item.owned - qty, shards: item.shards + shards },
+      },
+    });
+    persist(get());
+  },
+
   openMysteryChest: async (rarity) => {
     const state = get();
     const costs: Record<typeof rarity, { gold?: number; gems?: number }> = {
@@ -1010,32 +1076,36 @@ export function getHeroEffectiveStats(heroId: string, store: GameStore): Effecti
 
   const starMul = 1 + hero.stars * 0.05;
 
-  const maxHp = Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp) * starMul);
-  const attack = Math.round((hero.baseStats.attack + sumBonus('attack') + setAttack) * starMul);
-  const defense = Math.round((hero.baseStats.defense + sumBonus('defense') + setDefense) * starMul);
-  const speed = hero.baseStats.speed + sumBonus('speed');
-  const critRate = Math.min(0.85, hero.baseStats.critRate + sumBonus('critRate') + setCrit);
-  const critDamage = hero.baseStats.critDamage + sumBonus('critDamage');
-  const dodge = Math.min(0.6, hero.baseStats.dodge + sumBonus('dodge') + setDodge);
-  const maxMana = hero.baseStats.maxMana + sumBonus('maxMana');
-  const manaRegen = hero.baseStats.manaRegen + sumBonus('manaRegen');
-
-  const power = Math.round(maxHp * 0.4 + attack * 4 + defense * 3 + speed * 4 + critRate * 100 + (critDamage - 1) * 50);
-
-  return {
-    hp: maxHp,
-    maxHp,
-    attack,
-    defense,
-    speed,
+  const pre: HeroStats = {
+    hp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp) * starMul),
+    maxHp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp) * starMul),
+    attack: Math.round((hero.baseStats.attack + sumBonus('attack') + setAttack) * starMul),
+    defense: Math.round((hero.baseStats.defense + sumBonus('defense') + setDefense) * starMul),
+    speed: hero.baseStats.speed + sumBonus('speed'),
     range: hero.baseStats.range,
-    critRate,
-    critDamage,
-    dodge,
-    maxMana,
-    manaRegen,
+    critRate: Math.min(0.85, hero.baseStats.critRate + sumBonus('critRate') + setCrit),
+    critDamage: hero.baseStats.critDamage + sumBonus('critDamage'),
+    dodge: Math.min(0.6, hero.baseStats.dodge + sumBonus('dodge') + setDodge),
+    maxMana: hero.baseStats.maxMana + sumBonus('maxMana'),
+    manaRegen: hero.baseStats.manaRegen + sumBonus('manaRegen'),
     element: hero.baseStats.element,
     resistance: hero.baseStats.resistance,
+  };
+
+  const withTalents = applyTalentBonuses(hero.heroClass, hero.talentChoices, hero.level, pre);
+  const critRate = Math.min(0.95, withTalents.critRate);
+  const dodge = Math.min(0.75, withTalents.dodge);
+
+  const power = Math.round(
+    withTalents.maxHp * 0.4 + withTalents.attack * 4 + withTalents.defense * 3 +
+    withTalents.speed * 4 + critRate * 100 + (withTalents.critDamage - 1) * 50
+  );
+
+  return {
+    ...withTalents,
+    hp: withTalents.maxHp,
+    critRate,
+    dodge,
     power,
     setNames: activeSets,
   };

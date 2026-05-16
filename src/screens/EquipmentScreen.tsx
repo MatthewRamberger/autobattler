@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
 import { useGameStore } from '../store/gameStore';
 import EquipmentCard from '../components/EquipmentCard';
 
 export default function EquipmentScreen() {
-  const { setScreen, equipment, heroes } = useGameStore();
+  const { setScreen, equipment, heroes, dismantleEquipment } = useGameStore();
   const [filter, setFilter] = useState<'all' | 'weapon' | 'armor' | 'accessory'>('all');
   const [rarityFilter, setRarityFilter] = useState<string>('all');
 
@@ -64,7 +64,28 @@ export default function EquipmentScreen() {
           </View>
         ) : (
           filtered.map((item) => (
-            <EquipmentCard key={item.id} item={item} equipped={equippedIds.has(item.id)} />
+            <View key={item.id} style={{ position: 'relative' }}>
+              <EquipmentCard item={item} equipped={equippedIds.has(item.id)} />
+              {item.owned >= 2 && (
+                <TouchableOpacity
+                  style={styles.dismantleBtn}
+                  onPress={() => {
+                    const rarityYield: Record<string, number> = { common: 1, rare: 3, epic: 8, legendary: 20, mythic: 50 };
+                    const yieldPer = rarityYield[item.rarity] ?? 1;
+                    Alert.alert(
+                      `Dismantle ${item.name}?`,
+                      `Convert one copy into ${yieldPer} shards.`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Dismantle', onPress: () => dismantleEquipment(item.id, 1) },
+                      ],
+                    );
+                  }}
+                >
+                  <Text style={styles.dismantleText}>♻</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           ))
         )}
       </ScrollView>
@@ -99,4 +120,6 @@ const styles = StyleSheet.create({
   emptyText: { color: '#444', fontSize: 14, textAlign: 'center', lineHeight: 22 },
   tip: { padding: 10, borderTopWidth: 1, borderTopColor: '#1e1e2e', alignItems: 'center' },
   tipText: { color: '#555', fontSize: 11 },
+  dismantleBtn: { position: 'absolute', right: 60, top: 12, backgroundColor: '#c0392b22', borderColor: '#c0392b', borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 4 },
+  dismantleText: { color: '#c0392b', fontSize: 14, fontWeight: '800' },
 });

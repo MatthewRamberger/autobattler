@@ -100,6 +100,12 @@ export interface Hero {
   portraitSeed: number;    // drives portrait generation
   description: string;
   favorite?: boolean;
+  // Talent tree: choice index 0/1 per tier (4 tiers). Unlocked at hero
+  // level 5/10/15/20 respectively. -1 means not yet picked.
+  talentChoices?: number[];
+  // Per-hero career stats
+  battlesUsed?: number;
+  kills?: number;
 }
 
 export interface GridPosition {
