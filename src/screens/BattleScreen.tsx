@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Alert,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,18 +21,19 @@ export default function BattleScreen() {
   const isArena = currentLevelId === -1;
   const level = isArena ? null : LEVELS.find((l) => l.id === currentLevelId) ?? null;
 
-  const screenW = Dimensions.get('window').width;
-  const screenH = Dimensions.get('window').height;
+  // Live window dimensions — re-renders on rotate / split-screen. Using
+  // Dimensions.get can return stale values on first mount on some devices.
+  const { width: screenW, height: screenH } = useWindowDimensions();
   const grid = useMemo(() => gridForLevel(level), [level]);
 
   // Board budget: width minus side padding & frame padding; for small maps
   // the height is bounded so the combat log stays visible. For siege maps
   // we let the board grow taller and the user scrolls horizontally inside
   // the Arena container.
-  const fieldWBudget = screenW - 20 - FRAME_PAD * 2;
+  const fieldWBudget = Math.max(200, screenW - 20 - FRAME_PAD * 2);
   const fieldHBudget = grid.size === 'siege'
-    ? Math.min(screenH * 0.48, 360)
-    : Math.min(fieldWBudget * 0.72, 240);
+    ? Math.min(screenH * 0.45, 340)
+    : Math.min(fieldWBudget * 0.7, 220);
 
   const layout = useMemo(
     () => hexLayout(fieldWBudget, fieldHBudget, grid),
@@ -46,6 +47,11 @@ export default function BattleScreen() {
     getAnims, togglePause, fastForward,
   } = useBattleReplay(layout, grid);
   const [logFilter, setLogFilter] = useState<'all' | 'crits' | 'heals' | 'abilities' | 'deaths'>('all');
+  // Auto-scroll the combat log to the latest entry as new ticks stream in.
+  const logRef = useRef<ScrollView | null>(null);
+  useEffect(() => {
+    logRef.current?.scrollToEnd({ animated: true });
+  }, [log.length]);
 
   const players = units.filter((u) => u.isPlayer);
   const enemies = units.filter((u) => !u.isPlayer);
@@ -147,7 +153,12 @@ export default function BattleScreen() {
             ))}
           </View>
         </View>
-        <ScrollView style={styles.logScroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          ref={logRef}
+          style={styles.logScroll}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => logRef.current?.scrollToEnd({ animated: false })}
+        >
           {filteredLog.slice(-120).map((e, i) => (
             <Text key={i} style={[styles.logLine, logColor(e.type)]}>{e.text}</Text>
           ))}

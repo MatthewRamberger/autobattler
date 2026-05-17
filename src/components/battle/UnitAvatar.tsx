@@ -33,6 +33,12 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
   // in board space (not grid coords) — this lets us tween between cells
   // along an arbitrary screen-space line without worrying about the
   // odd-row half-cell offset.
+  //
+  // We position via TRANSFORM translate (not left/top) because:
+  //   1. transform animations are more reliable on web + native, and
+  //   2. they don't trigger React-style layout passes per frame.
+  // The wrap itself sits at the parent's (0, 0); the translate moves it
+  // so the unit's pixel center lands at (cx, cy).
   const cx = anims?.x ?? new Animated.Value(hexCenter(unit.position, layout).cx);
   const cy = anims?.y ?? new Animated.Value(hexCenter(unit.position, layout).cy);
   const shake = anims?.shake ?? new Animated.Value(0);
@@ -43,11 +49,16 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
   const bob = anims?.bob ?? new Animated.Value(0);
   const facing = anims?.facing ?? (unit.isPlayer ? 1 : -1);
 
-  const left = Animated.subtract(cx, cellW / 2);
-  const top = Animated.subtract(cy, cellH / 2);
-
+  // Pixel offset from cell center back to the wrap's top-left, plus the
+  // attack lunge + hit shake which are all JS-driven. The idle BOB and the
+  // scale/opacity animations live on the inner Animated.View because they
+  // run on the native driver — mixing drivers in the same transform is
+  // unsupported and the animation silently no-ops.
   const lunge = punch.interpolate({ inputRange: [0, 1], outputRange: [0, facing * (cellW * 0.32)] });
+  const translateX = Animated.add(Animated.subtract(cx, cellW / 2), Animated.add(shake, lunge));
+  const translateY = Animated.subtract(cy, cellH / 2);
   const bobY = bob.interpolate({ inputRange: [0, 1], outputRange: [0, -3] });
+
   const ring = unit.isPlayer ? palette.blue : palette.red;
   const ability = unit.abilityId ? ABILITIES[unit.abilityId] : null;
   const ready = !!ability && unit.ticksUntilAbility === 0 && unit.mana >= ability.manaCost && unit.isAlive;
@@ -69,8 +80,8 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
       style={[
         styles.wrap,
         {
-          width: cellW, height: cellH, left, top,
-          transform: [{ translateX: Animated.add(shake, lunge) }],
+          width: cellW, height: cellH, left: 0, top: 0,
+          transform: [{ translateX }, { translateY }],
         },
       ]}
     >
