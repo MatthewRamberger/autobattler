@@ -259,6 +259,13 @@ export interface Level {
     possibleDrops: string[];
   };
   recommendedPower?: number;
+  // Optional larger battlefield. Levels left at `undefined` use the
+  // default 9×5 grid; 'siege' uses the 22×11 scrolling battlefield
+  // with up to 12 heroes per side.
+  mapSize?: 'small' | 'siege';
+  // Optional override of the placement cap (defaults to the grid's
+  // maxHeroes — 5 for small, 12 for siege).
+  maxHeroes?: number;
 }
 
 export type Screen =

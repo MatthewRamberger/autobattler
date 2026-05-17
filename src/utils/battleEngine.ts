@@ -5,10 +5,11 @@ import {
 import { ABILITIES, CLASS_DEFAULT_ABILITY } from '../data/abilities';
 import { getPassive, DmgContext } from '../data/passives';
 import {
-  HEX_COLS, HEX_ROWS, hexDistance, hexNeighbors, inBounds, stepToward,
+  HexGrid, SMALL_GRID,
+  hexDistance, hexNeighbors, inBounds, stepToward,
 } from './hex';
 
-const MAX_TICKS = 400;
+const MAX_TICKS = 600;
 
 // ============================================================
 // Helpers
@@ -77,20 +78,20 @@ function pickTarget(attacker: BattleUnit, all: BattleUnit[]): BattleUnit | null 
   );
 }
 
-function findEmptyCell(all: BattleUnit[], near: GridPosition, isPlayerSide: boolean): GridPosition | null {
+function findEmptyCell(all: BattleUnit[], near: GridPosition, isPlayerSide: boolean, grid: HexGrid): GridPosition | null {
   // For shadow strike teleport BEHIND the target (relative to the caster's
   // facing direction). On a hex grid "behind" the enemy is one column
   // further into enemy territory; we scan that column's rows first, then
   // fall back to any neighbor of `near` that is unoccupied.
-  const targetCol = isPlayerSide ? Math.min(HEX_COLS - 1, near.col + 1) : Math.max(0, near.col - 1);
-  for (let row = 0; row < HEX_ROWS; row++) {
+  const targetCol = isPlayerSide ? Math.min(grid.cols - 1, near.col + 1) : Math.max(0, near.col - 1);
+  for (let row = 0; row < grid.rows; row++) {
     const candidate = { col: targetCol, row };
-    if (!inBounds(candidate)) continue;
+    if (!inBounds(candidate, grid)) continue;
     const occupied = all.some((u) => u.isAlive && u.position.col === candidate.col && u.position.row === candidate.row);
     if (!occupied) return candidate;
   }
   for (const n of hexNeighbors(near)) {
-    if (!inBounds(n)) continue;
+    if (!inBounds(n, grid)) continue;
     const occupied = all.some((u) => u.isAlive && u.position.col === n.col && u.position.row === n.row);
     if (!occupied) return n;
   }
@@ -251,7 +252,7 @@ function applyStatus(
 // ============================================================
 function executeAbility(
   caster: BattleUnit, ability: AbilityDef, all: BattleUnit[],
-  events: BattleEvent[], log: BattleLogEntry[], tick: number
+  events: BattleEvent[], log: BattleLogEntry[], tick: number, grid: HexGrid
 ) {
   caster.mana -= ability.manaCost;
   caster.ticksUntilAbility = ability.cooldownTicks;
@@ -336,7 +337,7 @@ function executeAbility(
       // Shadow strike: teleport and crit.
       const target = pickTarget(caster, all);
       if (!target) break;
-      const teleport = findEmptyCell(all, target.position, caster.isPlayer);
+      const teleport = findEmptyCell(all, target.position, caster.isPlayer, grid);
       if (teleport) {
         events.push({ tick, kind: 'move', sourceId: caster.id, fromPosition: caster.position, toPosition: teleport });
         caster.position = teleport;
@@ -440,6 +441,7 @@ function runBossMechanic(
   log: BattleLogEntry[],
   tick: number,
   _enrageGate: () => boolean,
+  grid: HexGrid,
 ) {
   const enemies = units.filter((u) => !u.isPlayer);
   if (enemies.length === 0) return;
@@ -501,14 +503,14 @@ function runBossMechanic(
       if (tick > 0 && tick % 24 === 0) {
         const candidates: GridPosition[] = [];
         for (const n of hexNeighbors(boss.position)) {
-          if (inBounds(n)) candidates.push(n);
+          if (inBounds(n, grid)) candidates.push(n);
         }
         // Fall back: scan boss column rows if no neighbor is free.
-        for (let row = 0; row < HEX_ROWS; row++) {
+        for (let row = 0; row < grid.rows; row++) {
           candidates.push({ col: boss.position.col, row });
         }
         for (const candidate of candidates) {
-          if (!inBounds(candidate)) continue;
+          if (!inBounds(candidate, grid)) continue;
           const occupied = units.some((u) => u.isAlive && u.position.col === candidate.col && u.position.row === candidate.row);
           if (!occupied) {
             const minion: BattleUnit = {
@@ -559,8 +561,10 @@ export function computeBattle(
   options?: {
     bossMechanic?: 'enrage' | 'summon' | 'aoe-burst' | 'lifelink';
     extraWaves?: BattleUnit[][];   // additional enemy waves that spawn when the previous is cleared
+    grid?: HexGrid;
   }
 ): BattleResult {
+  const grid: HexGrid = options?.grid ?? SMALL_GRID;
   const units: BattleUnit[] = [
     ...playerUnits.map(cloneUnit),
     ...enemyUnits.map(cloneUnit),
@@ -620,7 +624,7 @@ export function computeBattle(
 
     // 1b) Boss mechanics
     if (options?.bossMechanic) {
-      runBossMechanic(options.bossMechanic, units, events, log, tick, () => bossEnraged);
+      runBossMechanic(options.bossMechanic, units, events, log, tick, () => bossEnraged, grid);
     }
 
     // 2) Recompute alive after DoTs
@@ -653,7 +657,7 @@ export function computeBattle(
       ) {
         const ability = ABILITIES[attacker.abilityId];
         if (ability) {
-          executeAbility(attacker, ability, units, events, log, tick);
+          executeAbility(attacker, ability, units, events, log, tick, grid);
           attacker.ticksUntilAttack = Math.max(2, 10 - attacker.speed);
           continue;
         }
@@ -671,7 +675,7 @@ export function computeBattle(
         // step direction.
         const before = attacker.position;
         const principal = stepToward(before, target.position);
-        const candidates = hexNeighbors(before).filter(inBounds);
+        const candidates = hexNeighbors(before).filter((p) => inBounds(p, grid));
         const occupied = (p: GridPosition) =>
           units.some((u) => u !== attacker && u.isAlive && u.position.col === p.col && u.position.row === p.row);
         const sorted = candidates

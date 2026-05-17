@@ -15,9 +15,60 @@ import {
   STRONGHOLD_BUILDINGS, strongholdGoldMultiplier, strongholdExpMultiplier,
   strongholdShardBonus,
 } from '../data/stronghold';
-import { HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL } from '../utils/hex';
+import {
+  HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL,
+  SMALL_GRID, SIEGE_GRID, gridForLevel,
+} from '../utils/hex';
+import { LEVELS } from '../data/levels';
+
+// Read the live placement cap from the current battle context. Falls back
+// to the small grid cap when no level is selected (e.g. arena).
+function currentMaxHeroes(state: { currentLevelId: number | null }): number {
+  if (state.currentLevelId === -1) return SMALL_GRID.maxHeroes;
+  const level = LEVELS.find((l) => l.id === state.currentLevelId);
+  return level?.maxHeroes ?? gridForLevel(level ?? null).maxHeroes;
+}
 
 const SAVE_KEY = '@autobattler/save_v2';
+
+// Hero growth caps. Players who already exceeded these (from the old
+// uncapped formula) get rebased on hydrate — see `rebaseHero` below.
+export const MAX_HERO_LEVEL = 50;
+export const MAX_HERO_STARS = 5;
+// Per-level stat multiplier — used by both XP and gold-spent levelups.
+const LEVEL_BOOST = 1.05;
+// Per-star ascension boost.
+const ASCEND_HP_BOOST = 1.15;
+const ASCEND_ATK_BOOST = 1.10;
+
+// Reconstruct a hero's baseStats from the canonical source stats plus their
+// current level and star count, using the live growth formula. Used by the
+// hydrate-time migration to retroactively cap heroes that were trained
+// under the old (much steeper) growth curve.
+function rebaseBaseStats(
+  source: import('./../types').Hero['baseStats'],
+  level: number,
+  stars: number,
+): import('./../types').Hero['baseStats'] {
+  const lvlMul = Math.pow(LEVEL_BOOST, Math.max(0, level - 1));
+  const hpMul = lvlMul * Math.pow(ASCEND_HP_BOOST, stars);
+  const adMul = lvlMul * Math.pow(ASCEND_ATK_BOOST, stars);
+  return {
+    ...source,
+    maxHp: Math.round(source.maxHp * hpMul),
+    attack: Math.round(source.attack * adMul),
+    defense: Math.round(source.defense * adMul),
+    critRate: Math.min(0.5, source.critRate + Math.max(0, level - 1) * 0.0025 + stars * 0.015),
+    critDamage: source.critDamage,
+    speed: source.speed,
+    range: source.range,
+    dodge: source.dodge,
+    maxMana: source.maxMana + Math.max(0, level - 1) + stars * 2,
+    manaRegen: source.manaRegen,
+    element: source.element,
+    resistance: { ...source.resistance },
+  };
+}
 
 interface GameStore extends GameState {
   currentScreen: string;
@@ -38,6 +89,10 @@ interface GameStore extends GameState {
 
   applyBattleRewards: (won: boolean, gold: number, exp: number, heroIds: string[], stats: { damage: number; kills: number }, itemDrop?: string) => void;
   setArenaWave: (wave: number) => void;
+
+  // Mark the current battle as a forfeit. Bumps the loss counter and
+  // records `battlesUsed` for the placed heroes, no XP/gold awarded.
+  forfeitBattle: () => void;
 
   unlockHero: (heroId: string, cost: number) => void;
 
@@ -187,10 +242,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { heroes, gold, dailyQuestProgress } = state;
     const hero = heroes[heroId];
     if (!hero) return;
+    if (hero.level >= MAX_HERO_LEVEL) return;
     const cost = hero.level * 50;
     if (gold < cost) return;
     const newLevel = hero.level + 1;
-    const statBoost = 1.12;
     const dq = dailyQuestProgress.daily_levelup ?? { progress: 0, claimed: false };
     set({
       gold: gold - cost,
@@ -203,11 +258,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
           experienceToNext: Math.round(100 * Math.pow(1.3, newLevel)),
           baseStats: {
             ...hero.baseStats,
-            maxHp: Math.round(hero.baseStats.maxHp * statBoost),
-            attack: Math.round(hero.baseStats.attack * statBoost),
-            defense: Math.round(hero.baseStats.defense * statBoost),
-            critRate: Math.min(0.6, hero.baseStats.critRate + 0.005),
-            maxMana: hero.baseStats.maxMana + 2,
+            maxHp: Math.round(hero.baseStats.maxHp * LEVEL_BOOST),
+            attack: Math.round(hero.baseStats.attack * LEVEL_BOOST),
+            defense: Math.round(hero.baseStats.defense * LEVEL_BOOST),
+            critRate: Math.min(0.5, hero.baseStats.critRate + 0.003),
+            maxMana: hero.baseStats.maxMana + 1,
           },
         },
       },
@@ -220,7 +275,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { heroes, gems } = get();
     const hero = heroes[heroId];
     if (!hero) return;
-    if (hero.stars >= 5) return;
+    if (hero.stars >= MAX_HERO_STARS) return;
     const cost = (hero.stars + 1) * 30;
     if (gems < cost) return;
     set({
@@ -232,10 +287,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
           stars: hero.stars + 1,
           baseStats: {
             ...hero.baseStats,
-            maxHp: Math.round(hero.baseStats.maxHp * 1.25),
-            attack: Math.round(hero.baseStats.attack * 1.2),
-            defense: Math.round(hero.baseStats.defense * 1.2),
-            critRate: Math.min(0.7, hero.baseStats.critRate + 0.03),
+            maxHp: Math.round(hero.baseStats.maxHp * ASCEND_HP_BOOST),
+            attack: Math.round(hero.baseStats.attack * ASCEND_ATK_BOOST),
+            defense: Math.round(hero.baseStats.defense * ASCEND_ATK_BOOST),
+            critRate: Math.min(0.5, hero.baseStats.critRate + 0.015),
           },
         },
       },
@@ -297,8 +352,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setCurrentLevel: (levelId) => set({ currentLevelId: levelId, placedHeroes: {} }),
 
   placeHero: (heroId, pos) => {
-    const { placedHeroes } = get();
-    if (Object.keys(placedHeroes).length >= 5 && !placedHeroes[heroId]) return; // Cap at 5
+    const state = get();
+    const { placedHeroes } = state;
+    const cap = currentMaxHeroes(state);
+    if (Object.keys(placedHeroes).length >= cap && !placedHeroes[heroId]) return;
     const cleaned = Object.fromEntries(Object.entries(placedHeroes).filter(([id]) => id !== heroId));
     const deduped = Object.fromEntries(Object.entries(cleaned).filter(([, p]) => !(p.col === pos.col && p.row === pos.row)));
     set({ placedHeroes: { ...deduped, [heroId]: pos } });
@@ -314,46 +371,71 @@ export const useGameStore = create<GameStore>((set, get) => ({
   clearPlacements: () => set({ placedHeroes: {} }),
 
   autoPlace: () => {
-    const { heroes, placedHeroes } = get();
+    const state = get();
+    const { heroes } = state;
+    const cap = currentMaxHeroes(state);
+    const level = state.currentLevelId != null && state.currentLevelId !== -1
+      ? LEVELS.find((l) => l.id === state.currentLevelId)
+      : null;
+    const grid = gridForLevel(level ?? null);
     const unlocked = Object.values(heroes).filter((h) => h.unlocked);
-    // Sort: tanks front (warrior/paladin), DPS mid, ranged back.
+
+    // Sort by class role.
     const tanks = unlocked.filter((h) => ['Warrior', 'Paladin'].includes(h.heroClass));
     const dps = unlocked.filter((h) => ['Berserker', 'Rogue', 'Monk'].includes(h.heroClass));
     const ranged = unlocked.filter((h) => ['Archer', 'Mage', 'Cleric', 'Druid', 'Necromancer'].includes(h.heroClass));
 
-    // Hex grid is 9 wide × 5 tall. Players own cols 0..PLAYER_MAX_COL (3).
-    // Use the middle three rows for placements so we don't clip on small screens.
     const newPlacements: Record<string, GridPosition> = {};
-    const tankRows = [2, 1, 3];
-    const dpsRows = [2, 1, 3];
-    const rangedRows = [2, 1, 3];
+    // Cycle from middle row outward for symmetric placement.
+    const middle = Math.floor(grid.rows / 2);
+    const rowOrder: number[] = [middle];
+    for (let d = 1; d < grid.rows; d++) {
+      if (middle - d >= 0) rowOrder.push(middle - d);
+      if (middle + d < grid.rows) rowOrder.push(middle + d);
+    }
     const claim = (col: number, row: number, heroId: string) => {
-      if (Object.keys(newPlacements).length >= 5) return false;
+      if (Object.keys(newPlacements).length >= cap) return false;
+      if (col < 0 || col > grid.playerMaxCol) return false;
+      if (row < 0 || row >= grid.rows) return false;
       if (Object.values(newPlacements).some((p) => p.col === col && p.row === row)) return false;
       newPlacements[heroId] = { col, row };
       return true;
     };
+    const tankCol = grid.playerMaxCol;
+    const dpsCol = Math.max(0, grid.playerMaxCol - 1);
+    const rangedCol = 0;
+    const fillCol = Math.max(0, grid.playerMaxCol - 2);
+
     let i = 0;
-    for (const h of tanks.slice(0, 2)) {
-      if (!claim(PLAYER_MAX_COL, tankRows[i % tankRows.length], h.id)) break;
+    const tankLimit = Math.min(tanks.length, Math.ceil(cap / 3));
+    for (const h of tanks.slice(0, tankLimit)) {
+      if (!claim(tankCol, rowOrder[i % rowOrder.length], h.id)) break;
       i++;
     }
     i = 0;
-    for (const h of dps.slice(0, 2)) {
-      if (!claim(PLAYER_MAX_COL - 1, dpsRows[i % dpsRows.length], h.id)) break;
+    const dpsLimit = Math.min(dps.length, Math.ceil(cap / 3));
+    for (const h of dps.slice(0, dpsLimit)) {
+      if (!claim(dpsCol, rowOrder[i % rowOrder.length], h.id)) break;
       i++;
     }
     i = 0;
-    for (const h of ranged.slice(0, 2)) {
-      if (!claim(0, rangedRows[i % rangedRows.length], h.id)) break;
+    const rangedLimit = Math.min(ranged.length, Math.ceil(cap / 3));
+    for (const h of ranged.slice(0, rangedLimit)) {
+      if (!claim(rangedCol, rowOrder[i % rowOrder.length], h.id)) break;
       i++;
     }
-    // Fill remaining slots into the second column from the back.
+    // Fill any remaining slots round-robin.
     i = 0;
     for (const h of unlocked) {
-      if (Object.keys(newPlacements).length >= 5) break;
+      if (Object.keys(newPlacements).length >= cap) break;
       if (newPlacements[h.id]) continue;
-      claim(1, rangedRows[i % rangedRows.length], h.id);
+      // Find first free (col, row) on the player side scanning row-by-row.
+      let placed = false;
+      for (let col = grid.playerMaxCol; col >= 0 && !placed; col--) {
+        for (const row of rowOrder) {
+          if (claim(col, row, h.id)) { placed = true; break; }
+        }
+      }
       i++;
     }
     set({ placedHeroes: newPlacements });
@@ -375,20 +457,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
       let lvl = hero.level;
       let expNext = hero.experienceToNext;
       let baseStats = hero.baseStats;
-      while (newExp >= expNext && lvl < 50) {
+      while (newExp >= expNext && lvl < MAX_HERO_LEVEL) {
         newExp -= expNext;
         lvl += 1;
         expNext = Math.round(100 * Math.pow(1.3, lvl));
-        const boost = 1.08;
         baseStats = {
           ...baseStats,
-          maxHp: Math.round(baseStats.maxHp * boost),
-          attack: Math.round(baseStats.attack * boost),
-          defense: Math.round(baseStats.defense * boost),
-          critRate: Math.min(0.6, baseStats.critRate + 0.003),
+          maxHp: Math.round(baseStats.maxHp * LEVEL_BOOST),
+          attack: Math.round(baseStats.attack * LEVEL_BOOST),
+          defense: Math.round(baseStats.defense * LEVEL_BOOST),
+          critRate: Math.min(0.5, baseStats.critRate + 0.002),
           maxMana: baseStats.maxMana + 1,
         };
       }
+      // XP gained past the cap is discarded so the bar stops filling.
+      if (lvl >= MAX_HERO_LEVEL) { newExp = 0; expNext = 1; }
       const myKills = killsPerHero + (extraIdx++ < extraKills ? 1 : 0);
       updatedHeroes[heroId] = {
         ...hero, level: lvl, experience: newExp, experienceToNext: expNext, baseStats,
@@ -468,6 +551,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
       totalVictories: state.totalVictories + (won ? 1 : 0),
       totalDamageDealt: state.totalDamageDealt + stats.damage,
       totalKills: state.totalKills + stats.kills,
+    });
+    persist(get());
+  },
+
+  forfeitBattle: () => {
+    const state = get();
+    const heroIds = Object.keys(state.placedHeroes);
+    const updatedHeroes = { ...state.heroes };
+    for (const heroId of heroIds) {
+      const hero = updatedHeroes[heroId];
+      if (!hero) continue;
+      updatedHeroes[heroId] = { ...hero, battlesUsed: (hero.battlesUsed ?? 0) + 1 };
+    }
+    set({
+      heroes: updatedHeroes,
+      totalBattles: state.totalBattles + 1,
     });
     persist(get());
   },
@@ -656,6 +755,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // Lazy-import to avoid cycles.
     const { computeBattle, buildPlayerUnit, buildEnemyUnit } = await import('../utils/battleEngine');
     const { LEVELS } = await import('../data/levels');
+    const { gridForLevel } = await import('../utils/hex');
     const level = LEVELS.find((l) => l.id === levelId);
     if (!level) return { wins: 0, losses: 0, goldGained: 0, expGained: 0 };
     const state = get();
@@ -682,7 +782,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         position: e.position, icon: e.icon, index: idx,
         element: e.element, stars: e.stars, abilityId: e.abilityId,
       }));
-      const result = computeBattle(playerUnits, enemyUnits, { bossMechanic: level.bossMechanic });
+      const result = computeBattle(playerUnits, enemyUnits, { bossMechanic: level.bossMechanic, grid: gridForLevel(level) });
       const won = result.won;
       const totalDmg = result.finalUnits.filter((u) => u.isPlayer).reduce((s, u) => s + u.damageDealt, 0);
       const totalKills = result.finalUnits.filter((u) => u.isPlayer).reduce((s, u) => s + u.killCount, 0);
@@ -732,6 +832,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   predictBattle: async (levelId, samples = 12) => {
     const { computeBattle, buildPlayerUnit, buildEnemyUnit } = await import('../utils/battleEngine');
     const { LEVELS } = await import('../data/levels');
+    const { gridForLevel } = await import('../utils/hex');
     const level = LEVELS.find((l) => l.id === levelId);
     if (!level) return { winRate: 0, avgTicks: 0 };
     const state = get();
@@ -768,7 +869,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }))
       );
       const result = computeBattle(playerUnits, enemyUnits, {
-        bossMechanic: level.bossMechanic, extraWaves,
+        bossMechanic: level.bossMechanic, extraWaves, grid: gridForLevel(level),
       });
       if (result.won) wins++;
       ticks += result.totalTicks;
@@ -1016,6 +1117,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   quickFight: (levelId) => {
+    // Set level FIRST so autoPlace/loadout-apply uses the right grid bounds
+    // (siege levels need cols 0..7 of a wider grid).
+    set({ currentLevelId: levelId });
     const state = get();
     if (Object.keys(state.placedHeroes).length === 0) {
       const lo = state.loadouts['slot_1'] ?? Object.values(state.loadouts)[0];
@@ -1029,7 +1133,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         get().autoPlace();
       }
     }
-    set({ currentLevelId: levelId, currentScreen: 'battle' });
+    set({ currentScreen: 'battle' });
   },
 
   summonHero: async () => {
@@ -1098,6 +1202,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
           if (parsed.heroes && parsed.heroes[id]) {
             heroes[id] = { ...heroes[id], ...parsed.heroes[id] };
           }
+        }
+        // Rebase: clamp level/stars and recompute baseStats from the
+        // canonical hero data using the current growth formula. This
+        // retroactively shrinks heroes inflated by the old 1.08-1.12 boosts.
+        const sourceHeroes = Object.fromEntries(HEROES.map((h) => [h.id, h]));
+        for (const id in heroes) {
+          const source = sourceHeroes[id];
+          if (!source) continue;
+          const lvl = Math.max(1, Math.min(MAX_HERO_LEVEL, heroes[id].level));
+          const stars = Math.max(0, Math.min(MAX_HERO_STARS, heroes[id].stars));
+          heroes[id] = {
+            ...heroes[id],
+            level: lvl,
+            stars,
+            baseStats: rebaseBaseStats(source.baseStats, lvl, stars),
+            experience: lvl >= MAX_HERO_LEVEL ? 0 : heroes[id].experience,
+            experienceToNext: lvl >= MAX_HERO_LEVEL ? 1 : Math.round(100 * Math.pow(1.3, lvl)),
+          };
         }
         const equipment = { ...buildInitialEquipment() };
         for (const id in equipment) {
@@ -1233,7 +1355,9 @@ export function getHeroEffectiveStats(heroId: string, store: GameStore): Effecti
     }
   }
 
-  const starMul = 1 + hero.stars * 0.05;
+  // Star multiplier is intentionally small — the bulk of the per-star
+  // boost is folded into baseStats during ascendHero / hydrate rebase.
+  const starMul = 1 + hero.stars * 0.03;
   const mile = computeMilestoneBonuses(hero.kills ?? 0, hero.battlesUsed ?? 0);
 
   const pre: HeroStats = {

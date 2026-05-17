@@ -6,9 +6,9 @@ import {
 import { computeBattle, buildPlayerUnit, buildEnemyUnit } from '../utils/battleEngine';
 import { LEVELS } from '../data/levels';
 import { useGameStore, getHeroEffectiveStats, generateArenaWave } from '../store/gameStore';
-import { HEX_COLS, HEX_ROWS, hexLayout, hexCenter } from '../utils/hex';
+import { HEX_COLS, HEX_ROWS, HexGrid, HexLayout, hexCenter } from '../utils/hex';
 
-// Re-export for any old callers; the field is sized by hex layout now.
+// Legacy re-exports — kept so older imports still resolve.
 export const GRID_COLS = HEX_COLS;
 export const GRID_ROWS = HEX_ROWS;
 const BASE_TICK_MS = 460;
@@ -56,9 +56,11 @@ export type Phase = 'running' | 'paused' | 'done';
  * state on an unmounted tree or leak an interval (the old finish-time crash).
  *
  * `layout` is the hex pixel layout of the rendered board — passed in by the
- * screen so move tweens can target real pixel centers.
+ * screen so move tweens can target real pixel centers. `grid` is the
+ * abstract board (cols × rows × team zones) — passed to the engine so
+ * bounds checks scale with siege maps.
  */
-export function useBattleReplay(layout: ReturnType<typeof hexLayout>) {
+export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
   const store = useGameStore();
   const {
     currentLevelId, heroes, placedHeroes, applyBattleRewards,
@@ -158,7 +160,7 @@ export function useBattleReplay(layout: ReturnType<typeof hexLayout>) {
       );
 
       const computed = computeBattle(playerUnits, enemyUnits, {
-        bossMechanic: level?.bossMechanic, extraWaves,
+        bossMechanic: level?.bossMechanic, extraWaves, grid,
       });
       events.current = computed.events;
       logs.current = computed.log;

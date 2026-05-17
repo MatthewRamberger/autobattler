@@ -1,18 +1,20 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Dimensions } from 'react-native';
+import {
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Dimensions,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useGameStore, getHeroEffectiveStats, computeTeamSynergies, generateArenaWave } from '../store/gameStore';
+import {
+  useGameStore, getHeroEffectiveStats, computeTeamSynergies, generateArenaWave,
+} from '../store/gameStore';
 import { LEVELS } from '../data/levels';
 import { GridPosition } from '../types';
 import HeroPortrait from '../components/HeroPortrait';
 import Sprite from '../components/battle/spriteRenderer';
 import { spriteFor } from '../components/battle/spriteLibrary';
 import { Hex } from '../components/battle/Arena';
+import { gridForLevel, hexLayout, hexCenter, HexLayout } from '../utils/hex';
 import {
-  HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL, hexLayout, hexCenter,
-} from '../utils/hex';
-import {
-  Screen, TopBar, Panel, GButton, palette, gradients, radius, spacing,
+  Screen, TopBar, Panel, GButton, palette, gradients, radius,
 } from '../components/ui';
 
 export default function BattlePrepScreen() {
@@ -31,12 +33,24 @@ export default function BattlePrepScreen() {
   const level = isArena ? null : LEVELS.find((l) => l.id === currentLevelId);
 
   const screenW = Dimensions.get('window').width;
+  const screenH = Dimensions.get('window').height;
+  const grid = useMemo(() => gridForLevel(level ?? null), [level]);
+
+  // The prep grid budget shrinks for siege maps so the hero bench remains
+  // visible. The arena itself horizontally scrolls.
   const fieldWBudget = screenW - 24;
-  const fieldHBudget = Math.min(fieldWBudget * 0.72, 260);
-  const layout = useMemo(() => hexLayout(fieldWBudget, fieldHBudget), [fieldWBudget, fieldHBudget]);
+  const fieldHBudget = grid.size === 'siege'
+    ? Math.min(screenH * 0.40, 320)
+    : Math.min(fieldWBudget * 0.72, 240);
+
+  const layout: HexLayout = useMemo(
+    () => hexLayout(fieldWBudget, fieldHBudget, grid),
+    [fieldWBudget, fieldHBudget, grid]
+  );
 
   if (!level && !isArena) return null;
 
+  const maxHeroes = level?.maxHeroes ?? grid.maxHeroes;
   const unlockedHeroes = Object.values(heroes).filter((h) => h.unlocked);
   const placedIds = new Set(Object.keys(placedHeroes));
   const synergies = computeTeamSynergies(Object.keys(placedHeroes), store);
@@ -44,7 +58,7 @@ export default function BattlePrepScreen() {
   const teamPower = Object.keys(placedHeroes).reduce((s, id) => s + (getHeroEffectiveStats(id, store)?.power ?? 0), 0);
 
   function handleCell(col: number, row: number) {
-    if (col > PLAYER_MAX_COL) return;
+    if (col > grid.playerMaxCol) return;
     const existing = Object.entries(placedHeroes).find(([, p]) => p.col === col && p.row === row);
     if (existing) {
       if (selectedHeroId === existing[0]) { removeHeroFromGrid(existing[0]); setSelectedHeroId(null); }
@@ -65,21 +79,22 @@ export default function BattlePrepScreen() {
   const recommended = level?.recommendedPower ?? 0;
   const powerOk = !recommended || teamPower >= recommended;
 
-  // Build the hex map as a stack of absolutely positioned hex cells + tap
-  // targets. We render player hexes blue, enemy hexes red, contested col grey.
+  // Build the hex map. For siege we use a slightly smaller sprite-to-hex
+  // ratio so units don't overflow neighboring cells.
+  const spriteRatio = grid.size === 'siege' ? 0.74 : 0.84;
   const cells: React.ReactNode[] = [];
-  for (let row = 0; row < HEX_ROWS; row++) {
-    for (let col = 0; col < HEX_COLS; col++) {
+  for (let row = 0; row < grid.rows; row++) {
+    for (let col = 0; col < grid.cols; col++) {
       const { cx, cy } = hexCenter({ col, row }, layout);
       const placedHeroId = Object.entries(placedHeroes).find(([, p]) => p.col === col && p.row === row)?.[0];
       const enemyHere = (level?.enemies ?? enemyPreview).find((e) => e.position.col === col && e.position.row === row);
       const placedHero = placedHeroId ? heroes[placedHeroId] : null;
-      const isPlayer = col <= PLAYER_MAX_COL;
-      const isEnemy = col >= ENEMY_MIN_COL;
+      const isPlayer = col <= grid.playerMaxCol;
+      const isEnemy = col >= grid.enemyMinCol;
       const selected = placedHeroId === selectedHeroId;
       const tint = isPlayer ? '#1c3956' : isEnemy ? '#5a2840' : '#3a2f30';
       const hiTint = isPlayer ? '#2c5780' : isEnemy ? '#7a3a58' : '#534545';
-      const spriteH = Math.min(layout.hexW, layout.hexH) * 0.84;
+      const spriteH = Math.min(layout.hexW, layout.hexH) * spriteRatio;
       cells.push(
         <TouchableOpacity
           key={`${row}-${col}`}
@@ -129,6 +144,21 @@ export default function BattlePrepScreen() {
     }
   }
 
+  const arenaCanvas = (
+    <View style={{ width: layout.totalW + 12, height: layout.totalH + 12 }}>
+      <LinearGradient colors={['#f6c945', '#a9781a']} style={StyleSheet.absoluteFill} />
+      <View style={{
+        position: 'absolute', left: 6, top: 6,
+        width: layout.totalW, height: layout.totalH,
+        backgroundColor: '#0c1828', borderRadius: 10, overflow: 'hidden',
+      }}>
+        {cells}
+      </View>
+    </View>
+  );
+
+  const needsScroll = layout.totalW > fieldWBudget + 2;
+
   return (
     <Screen>
       <TopBar
@@ -152,6 +182,11 @@ export default function BattlePrepScreen() {
             small label={predicting ? '…' : '🔮 Predict'} variant="purple"
             onPress={async () => { setPredicting(true); const r = await predictBattle(level.id, 8); setPrediction(r); setPredicting(false); }}
           />
+        )}
+        {grid.size === 'siege' && (
+          <View style={styles.siegeChip}>
+            <Text style={styles.siegeChipText}>SIEGE · {Object.keys(placedHeroes).length}/{maxHeroes}</Text>
+          </View>
         )}
       </View>
 
@@ -183,16 +218,17 @@ export default function BattlePrepScreen() {
       )}
 
       <View style={styles.arenaWrap}>
-        <View style={[styles.arena, { width: layout.totalW + 12, height: layout.totalH + 12 }]}>
-          <LinearGradient colors={['#f6c945', '#a9781a']} style={StyleSheet.absoluteFill} />
-          <View style={{
-            position: 'absolute', left: 6, top: 6,
-            width: layout.totalW, height: layout.totalH,
-            backgroundColor: '#0c1828', borderRadius: 10, overflow: 'hidden',
-          }}>
-            {cells}
-          </View>
-        </View>
+        {needsScroll ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator
+            contentContainerStyle={{ paddingHorizontal: 6 }}
+          >
+            {arenaCanvas}
+          </ScrollView>
+        ) : (
+          arenaCanvas
+        )}
       </View>
 
       {synergies.length > 0 && (
@@ -207,7 +243,9 @@ export default function BattlePrepScreen() {
       )}
 
       <View style={styles.benchWrap}>
-        <Text style={styles.benchTitle}>YOUR HEROES — tap, then tap a blue hex</Text>
+        <Text style={styles.benchTitle}>
+          YOUR HEROES — tap, then tap a blue hex · {Object.keys(placedHeroes).length}/{maxHeroes} placed
+        </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 10, gap: 8 }}>
           {unlockedHeroes.map((hero) => {
             const sel = hero.id === selectedHeroId;
@@ -250,13 +288,14 @@ const styles = StyleSheet.create({
   powerPill: { flexDirection: 'row', alignItems: 'baseline', backgroundColor: palette.panelDeep, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: '#0007' },
   powerText: { fontWeight: '900', fontSize: 13 },
   recText: { color: palette.textDim, fontSize: 10, fontWeight: '700' },
-  toolbar: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingVertical: 4, flexWrap: 'wrap' },
+  toolbar: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingVertical: 4, flexWrap: 'wrap', alignItems: 'center' },
+  siegeChip: { paddingHorizontal: 8, paddingVertical: 3, backgroundColor: palette.purpleDeep, borderRadius: 6, borderWidth: 1, borderColor: palette.purple },
+  siegeChipText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
   predict: { backgroundColor: palette.purpleDeep + '55', marginHorizontal: 12, borderRadius: 8, paddingVertical: 6, marginTop: 2 },
   predictText: { color: '#caa8ff', fontWeight: '800', fontSize: 12, textAlign: 'center' },
   loadouts: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingTop: 6 },
   loName: { color: palette.textSoft, fontSize: 11, fontWeight: '800', textAlign: 'center' },
   arenaWrap: { padding: 8, alignItems: 'center' },
-  arena: { borderRadius: radius.lg, overflow: 'hidden', borderWidth: 3, borderColor: palette.goldDeep },
   plus: { color: '#ffffff33', fontSize: 18, fontWeight: '900' },
   synergies: { paddingHorizontal: 12, gap: 6, paddingVertical: 2 },
   synChip: { borderRadius: 10, paddingVertical: 4, paddingHorizontal: 10, alignItems: 'center', borderWidth: 1 },

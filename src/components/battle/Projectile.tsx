@@ -3,13 +3,13 @@ import { Animated, Text } from 'react-native';
 import { Element } from '../../types';
 import { ELEMENT_COLORS } from '../../data/heroes';
 import { Projectile as Proj } from '../../hooks/useBattleReplay';
-import { hexLayout, hexCenter } from '../../utils/hex';
+import { HexLayout, hexCenter } from '../../utils/hex';
 
 const GLYPH: Record<Element, string> = {
   physical: '➤', fire: '🔥', ice: '❄', lightning: '⚡', holy: '✨', shadow: '🌑', nature: '🍃',
 };
 
-interface Props { proj: Proj; layout: ReturnType<typeof hexLayout>; }
+interface Props { proj: Proj; layout: HexLayout; }
 
 export default function Projectile({ proj, layout }: Props) {
   const from = hexCenter(proj.from, layout);

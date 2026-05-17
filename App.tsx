@@ -1,6 +1,9 @@
 import React, { useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
+import {
+  View, ActivityIndicator, StyleSheet, Text, BackHandler, Alert, Platform,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useGameStore } from './src/store/gameStore';
 import { ScreenBackground } from './src/components/ui';
 import { palette } from './src/theme';
@@ -23,22 +26,78 @@ import StrongholdScreen from './src/screens/StrongholdScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import SummonScreen from './src/screens/SummonScreen';
 
+// Where each screen routes when the user hits "back". The battle screen is
+// a special case: it asks for confirmation, then forfeits to battle-prep.
+const BACK_TARGET: Record<string, string | 'forfeit'> = {
+  home: 'home',
+  collection: 'home',
+  equipment: 'home',
+  levels: 'home',
+  'battle-prep': 'levels',
+  battle: 'forfeit',
+  shop: 'home',
+  achievements: 'home',
+  arena: 'home',
+  forge: 'home',
+  daily: 'home',
+  stats: 'home',
+  codex: 'home',
+  chests: 'home',
+  stronghold: 'home',
+  settings: 'home',
+  summon: 'home',
+};
+
 export default function App() {
-  const { currentScreen, hydrated, hydrate, setScreen } = useGameStore();
+  const { currentScreen, hydrated, hydrate, setScreen, clearPlacements, forfeitBattle } = useGameStore();
 
   useEffect(() => {
     hydrate();
   }, []);
 
+  // Android hardware/gesture back button. iOS users use on-screen back chips.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      const target = BACK_TARGET[currentScreen];
+      if (currentScreen === 'home') return false; // let the OS exit the app
+      if (target === 'forfeit') {
+        Alert.alert(
+          'Leave battle?',
+          'Forfeiting counts as a loss. Are you sure?',
+          [
+            { text: 'Stay', style: 'cancel' },
+            {
+              text: 'Forfeit', style: 'destructive', onPress: () => {
+                forfeitBattle();
+                clearPlacements();
+                setScreen('levels');
+              },
+            },
+          ],
+        );
+        return true;
+      }
+      // battle-prep clears placements on the way out so they don't bleed
+      // into a different level.
+      if (currentScreen === 'battle-prep') clearPlacements();
+      setScreen(target ?? 'home');
+      return true;
+    });
+    return () => sub.remove();
+  }, [currentScreen, setScreen, clearPlacements, forfeitBattle]);
+
   if (!hydrated) {
     return (
-      <View style={styles.loading}>
-        <ScreenBackground />
-        <StatusBar style="light" />
-        <Text style={styles.logo}>⚔️</Text>
-        <ActivityIndicator size="large" color={palette.gold} style={{ marginTop: 16 }} />
-        <Text style={styles.loadingText}>Mustering the army…</Text>
-      </View>
+      <SafeAreaProvider>
+        <View style={styles.loading}>
+          <ScreenBackground />
+          <StatusBar style="light" />
+          <Text style={styles.logo}>⚔️</Text>
+          <ActivityIndicator size="large" color={palette.gold} style={{ marginTop: 16 }} />
+          <Text style={styles.loadingText}>Mustering the army…</Text>
+        </View>
+      </SafeAreaProvider>
     );
   }
 
@@ -66,12 +125,12 @@ export default function App() {
   }
 
   return (
-    <>
+    <SafeAreaProvider>
       <StatusBar style="light" />
       <ErrorBoundary key={currentScreen} onRecover={() => setScreen('home')}>
         {renderScreen()}
       </ErrorBoundary>
-    </>
+    </SafeAreaProvider>
   );
 }
 
