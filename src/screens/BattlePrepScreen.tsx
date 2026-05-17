@@ -1,17 +1,19 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGameStore, getHeroEffectiveStats, computeTeamSynergies, generateArenaWave } from '../store/gameStore';
 import { LEVELS } from '../data/levels';
 import { GridPosition } from '../types';
 import HeroPortrait from '../components/HeroPortrait';
+import Sprite from '../components/battle/spriteRenderer';
+import { spriteFor } from '../components/battle/spriteLibrary';
+import { Hex } from '../components/battle/Arena';
+import {
+  HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL, hexLayout, hexCenter,
+} from '../utils/hex';
 import {
   Screen, TopBar, Panel, GButton, palette, gradients, radius, spacing,
 } from '../components/ui';
-
-const GRID_COLS = 10;
-const GRID_ROWS = 3;
-const PLAYER_MAX_COL = 4;
 
 export default function BattlePrepScreen() {
   const store = useGameStore();
@@ -27,6 +29,12 @@ export default function BattlePrepScreen() {
 
   const isArena = currentLevelId === -1;
   const level = isArena ? null : LEVELS.find((l) => l.id === currentLevelId);
+
+  const screenW = Dimensions.get('window').width;
+  const fieldWBudget = screenW - 24;
+  const fieldHBudget = Math.min(fieldWBudget * 0.72, 260);
+  const layout = useMemo(() => hexLayout(fieldWBudget, fieldHBudget), [fieldWBudget, fieldHBudget]);
+
   if (!level && !isArena) return null;
 
   const unlockedHeroes = Object.values(heroes).filter((h) => h.unlocked);
@@ -48,7 +56,7 @@ export default function BattlePrepScreen() {
 
   function startBattle() {
     if (Object.keys(placedHeroes).length === 0) {
-      Alert.alert('No heroes placed', 'Tap a hero below, then tap a blue cell.');
+      Alert.alert('No heroes placed', 'Tap a hero below, then tap a blue hex.');
       return;
     }
     setScreen('battle');
@@ -56,6 +64,70 @@ export default function BattlePrepScreen() {
 
   const recommended = level?.recommendedPower ?? 0;
   const powerOk = !recommended || teamPower >= recommended;
+
+  // Build the hex map as a stack of absolutely positioned hex cells + tap
+  // targets. We render player hexes blue, enemy hexes red, contested col grey.
+  const cells: React.ReactNode[] = [];
+  for (let row = 0; row < HEX_ROWS; row++) {
+    for (let col = 0; col < HEX_COLS; col++) {
+      const { cx, cy } = hexCenter({ col, row }, layout);
+      const placedHeroId = Object.entries(placedHeroes).find(([, p]) => p.col === col && p.row === row)?.[0];
+      const enemyHere = (level?.enemies ?? enemyPreview).find((e) => e.position.col === col && e.position.row === row);
+      const placedHero = placedHeroId ? heroes[placedHeroId] : null;
+      const isPlayer = col <= PLAYER_MAX_COL;
+      const isEnemy = col >= ENEMY_MIN_COL;
+      const selected = placedHeroId === selectedHeroId;
+      const tint = isPlayer ? '#1c3956' : isEnemy ? '#5a2840' : '#3a2f30';
+      const hiTint = isPlayer ? '#2c5780' : isEnemy ? '#7a3a58' : '#534545';
+      const spriteH = Math.min(layout.hexW, layout.hexH) * 0.84;
+      cells.push(
+        <TouchableOpacity
+          key={`${row}-${col}`}
+          activeOpacity={isPlayer ? 0.7 : 1}
+          onPress={() => handleCell(col, row)}
+          style={{
+            position: 'absolute',
+            left: cx - layout.hexW / 2,
+            top: cy - layout.hexH / 2,
+            width: layout.hexW,
+            height: layout.hexH,
+          }}
+        >
+          <Hex w={layout.hexW} h={layout.hexH} fill={tint} stroke={'#0008'} hiFill={hiTint} />
+          {selected && (
+            <View style={{
+              ...StyleSheet.absoluteFillObject,
+              borderWidth: 2, borderColor: palette.gold, borderRadius: 6,
+            }} />
+          )}
+          <View style={{
+            position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            {placedHero ? (
+              <Sprite
+                def={spriteFor({
+                  heroId: placedHero.id, icon: placedHero.icon,
+                  heroClass: placedHero.heroClass, isPlayer: true,
+                })}
+                size={spriteH}
+              />
+            ) : enemyHere ? (
+              <Sprite
+                def={spriteFor({
+                  icon: enemyHere.icon, heroClass: enemyHere.heroClass, isPlayer: false,
+                })}
+                size={spriteH}
+                flip
+              />
+            ) : isPlayer ? (
+              <Text style={styles.plus}>＋</Text>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+  }
 
   return (
     <Screen>
@@ -111,47 +183,15 @@ export default function BattlePrepScreen() {
       )}
 
       <View style={styles.arenaWrap}>
-        <View style={styles.arena}>
-          {Array.from({ length: GRID_ROWS }, (_, row) => (
-            <View key={row} style={{ flexDirection: 'row' }}>
-              {Array.from({ length: GRID_COLS }, (_, col) => {
-                const playerSide = col <= PLAYER_MAX_COL;
-                const placedHeroId = Object.entries(placedHeroes).find(([, p]) => p.col === col && p.row === row)?.[0];
-                const enemyHere = level?.enemies.find((e) => e.position.col === col && e.position.row === row)
-                  ?? (isArena ? enemyPreview.find((e) => e.position.col === col && e.position.row === row) : undefined);
-                const placedHero = placedHeroId ? heroes[placedHeroId] : null;
-                const selected = placedHeroId === selectedHeroId;
-                return (
-                  <TouchableOpacity
-                    key={col} activeOpacity={playerSide ? 0.7 : 1}
-                    onPress={() => handleCell(col, row)}
-                    style={{ flex: 1, aspectRatio: 1 }}
-                  >
-                    <LinearGradient
-                      colors={playerSide ? gradients.arenaPlayer : gradients.arenaEnemy}
-                      style={[
-                        styles.cell,
-                        selected && styles.cellSel,
-                        col === PLAYER_MAX_COL && styles.midR,
-                      ]}
-                    >
-                      {placedHero ? (
-                        <HeroPortrait size={34} heroClass={placedHero.heroClass} rarity={placedHero.rarity}
-                          icon={placedHero.icon} element={placedHero.baseStats.element} seed={placedHero.portraitSeed}
-                          stars={placedHero.stars} showFrame={false} />
-                      ) : enemyHere ? (
-                        <HeroPortrait size={34} heroClass={enemyHere.heroClass} rarity="common" icon={enemyHere.icon}
-                          element={enemyHere.element ?? 'physical'} seed={(enemyHere.name.charCodeAt(0) * 13) + enemyHere.position.col}
-                          stars={enemyHere.stars} isEnemy showFrame={false} />
-                      ) : playerSide ? (
-                        <Text style={styles.plus}>＋</Text>
-                      ) : null}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ))}
+        <View style={[styles.arena, { width: layout.totalW + 12, height: layout.totalH + 12 }]}>
+          <LinearGradient colors={['#f6c945', '#a9781a']} style={StyleSheet.absoluteFill} />
+          <View style={{
+            position: 'absolute', left: 6, top: 6,
+            width: layout.totalW, height: layout.totalH,
+            backgroundColor: '#0c1828', borderRadius: 10, overflow: 'hidden',
+          }}>
+            {cells}
+          </View>
         </View>
       </View>
 
@@ -167,7 +207,7 @@ export default function BattlePrepScreen() {
       )}
 
       <View style={styles.benchWrap}>
-        <Text style={styles.benchTitle}>YOUR HEROES — tap, then tap a blue cell</Text>
+        <Text style={styles.benchTitle}>YOUR HEROES — tap, then tap a blue hex</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 10, gap: 8 }}>
           {unlockedHeroes.map((hero) => {
             const sel = hero.id === selectedHeroId;
@@ -215,11 +255,8 @@ const styles = StyleSheet.create({
   predictText: { color: '#caa8ff', fontWeight: '800', fontSize: 12, textAlign: 'center' },
   loadouts: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingTop: 6 },
   loName: { color: palette.textSoft, fontSize: 11, fontWeight: '800', textAlign: 'center' },
-  arenaWrap: { padding: 8 },
+  arenaWrap: { padding: 8, alignItems: 'center' },
   arena: { borderRadius: radius.lg, overflow: 'hidden', borderWidth: 3, borderColor: palette.goldDeep },
-  cell: { flex: 1, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: '#ffffff12' },
-  cellSel: { borderWidth: 2, borderColor: palette.gold },
-  midR: { borderRightWidth: 2, borderRightColor: palette.gold + '99' },
   plus: { color: '#ffffff33', fontSize: 18, fontWeight: '900' },
   synergies: { paddingHorizontal: 12, gap: 6, paddingVertical: 2 },
   synChip: { borderRadius: 10, paddingVertical: 4, paddingHorizontal: 10, alignItems: 'center', borderWidth: 1 },

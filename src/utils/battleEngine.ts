@@ -4,19 +4,24 @@ import {
 } from '../types';
 import { ABILITIES, CLASS_DEFAULT_ABILITY } from '../data/abilities';
 import { getPassive, DmgContext } from '../data/passives';
+import {
+  HEX_COLS, HEX_ROWS, hexDistance, hexNeighbors, inBounds, stepToward,
+} from './hex';
 
 const MAX_TICKS = 400;
-const GRID_COLS = 10;
 
 // ============================================================
 // Helpers
 // ============================================================
+// Hex grid distance (between two odd-r offset cells).
 function distance(a: GridPosition, b: GridPosition): number {
-  return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+  return hexDistance(a, b);
 }
 
+// On a hex grid Chebyshev and Manhattan are the same concept — AoE radius
+// checks use the same hex distance.
 function chebyshev(a: GridPosition, b: GridPosition): number {
-  return Math.max(Math.abs(a.col - b.col), Math.abs(a.row - b.row));
+  return hexDistance(a, b);
 }
 
 function isStunned(u: BattleUnit): boolean {
@@ -73,12 +78,21 @@ function pickTarget(attacker: BattleUnit, all: BattleUnit[]): BattleUnit | null 
 }
 
 function findEmptyCell(all: BattleUnit[], near: GridPosition, isPlayerSide: boolean): GridPosition | null {
-  // For shadow strike teleport behind enemy.
-  const targetCol = isPlayerSide ? Math.min(GRID_COLS - 1, near.col + 1) : Math.max(0, near.col - 1);
-  for (let row = 0; row < 3; row++) {
+  // For shadow strike teleport BEHIND the target (relative to the caster's
+  // facing direction). On a hex grid "behind" the enemy is one column
+  // further into enemy territory; we scan that column's rows first, then
+  // fall back to any neighbor of `near` that is unoccupied.
+  const targetCol = isPlayerSide ? Math.min(HEX_COLS - 1, near.col + 1) : Math.max(0, near.col - 1);
+  for (let row = 0; row < HEX_ROWS; row++) {
     const candidate = { col: targetCol, row };
+    if (!inBounds(candidate)) continue;
     const occupied = all.some((u) => u.isAlive && u.position.col === candidate.col && u.position.row === candidate.row);
     if (!occupied) return candidate;
+  }
+  for (const n of hexNeighbors(near)) {
+    if (!inBounds(n)) continue;
+    const occupied = all.some((u) => u.isAlive && u.position.col === n.col && u.position.row === n.row);
+    if (!occupied) return n;
   }
   return null;
 }
@@ -485,13 +499,21 @@ function runBossMechanic(
     case 'summon': {
       // Every 24 ticks, summon a shadow minion adjacent to boss if a free cell exists.
       if (tick > 0 && tick % 24 === 0) {
-        for (let row = 0; row < 3; row++) {
-          const candidate = { col: Math.min(9, boss.position.col), row };
+        const candidates: GridPosition[] = [];
+        for (const n of hexNeighbors(boss.position)) {
+          if (inBounds(n)) candidates.push(n);
+        }
+        // Fall back: scan boss column rows if no neighbor is free.
+        for (let row = 0; row < HEX_ROWS; row++) {
+          candidates.push({ col: boss.position.col, row });
+        }
+        for (const candidate of candidates) {
+          if (!inBounds(candidate)) continue;
           const occupied = units.some((u) => u.isAlive && u.position.col === candidate.col && u.position.row === candidate.row);
           if (!occupied) {
             const minion: BattleUnit = {
               ...boss,
-              id: `summon_${tick}_${row}`,
+              id: `summon_${tick}_${candidate.col}_${candidate.row}`,
               heroId: 'summon',
               name: 'Shadow Spawn',
               icon: '🦑',
@@ -644,16 +666,27 @@ export function computeBattle(
 
       const dist = distance(attacker.position, target.position);
       if (dist > attacker.range) {
-        // Move toward target
-        const dx = Math.sign(target.position.col - attacker.position.col);
-        const dy = Math.sign(target.position.row - attacker.position.row);
+        // Move toward target — pick the best free hex neighbor by hex
+        // distance to the target, ties broken by preferring the principal
+        // step direction.
         const before = attacker.position;
-        let after = { ...before };
-        if (dx !== 0) after = { ...before, col: before.col + dx };
-        else if (dy !== 0) after = { ...before, row: before.row + dy };
-        // Avoid collisions
-        const collision = units.some((u) => u !== attacker && u.isAlive && u.position.col === after.col && u.position.row === after.row);
-        if (!collision) {
+        const principal = stepToward(before, target.position);
+        const candidates = hexNeighbors(before).filter(inBounds);
+        const occupied = (p: GridPosition) =>
+          units.some((u) => u !== attacker && u.isAlive && u.position.col === p.col && u.position.row === p.row);
+        const sorted = candidates
+          .filter((p) => !occupied(p))
+          .sort((a, b) => {
+            const da = hexDistance(a, target.position);
+            const db = hexDistance(b, target.position);
+            if (da !== db) return da - db;
+            // Prefer the principal step direction so movement looks intentional.
+            const pa = (a.col === principal.col && a.row === principal.row) ? 0 : 1;
+            const pb = (b.col === principal.col && b.row === principal.row) ? 0 : 1;
+            return pa - pb;
+          });
+        const after = sorted[0];
+        if (after && hexDistance(after, target.position) < dist) {
           attacker.position = after;
           events.push({ tick, kind: 'move', sourceId: attacker.id, fromPosition: before, toPosition: after });
         }

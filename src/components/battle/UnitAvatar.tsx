@@ -1,11 +1,14 @@
 import React from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
-import HeroPortrait from '../HeroPortrait';
+import Sprite from './spriteRenderer';
+import { spriteFor } from './spriteLibrary';
 import FloatingNumber from '../FloatingNumber';
 import { ABILITIES } from '../../data/abilities';
 import { StatusEffectType } from '../../types';
-import { LiveUnit, UnitAnims, VfxNumber, GRID_COLS, GRID_ROWS } from '../../hooks/useBattleReplay';
+import { LiveUnit, UnitAnims, VfxNumber } from '../../hooks/useBattleReplay';
+import { hexLayout, hexCenter } from '../../utils/hex';
 import { palette } from '../../theme';
+import { ELEMENT_COLORS } from '../../data/heroes';
 
 const STATUS_ICON: Record<StatusEffectType, string> = {
   poison: '☠️', burn: '🔥', stun: '💫', freeze: '❄️', slow: '🐌', regen: '💚',
@@ -16,13 +19,22 @@ interface Props {
   unit: LiveUnit;
   anims?: UnitAnims;
   vfx: VfxNumber[];
-  cellW: number;
-  cellH: number;
+  layout: ReturnType<typeof hexLayout>;
 }
 
-function UnitAvatarBase({ unit, anims, vfx, cellW, cellH }: Props) {
-  const x = anims?.x ?? new Animated.Value(unit.position.col);
-  const y = anims?.y ?? new Animated.Value(unit.position.row);
+function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
+  const { hexW, hexH } = layout;
+  // The avatar wrapper is sized to a full hex cell so badges/HP bars align
+  // to its bounds rather than the sprite's pixel art.
+  const cellW = hexW;
+  const cellH = hexH;
+
+  // In hex mode the anims `x`/`y` are PIXEL CENTER coordinates of the unit
+  // in board space (not grid coords) — this lets us tween between cells
+  // along an arbitrary screen-space line without worrying about the
+  // odd-row half-cell offset.
+  const cx = anims?.x ?? new Animated.Value(hexCenter(unit.position, layout).cx);
+  const cy = anims?.y ?? new Animated.Value(hexCenter(unit.position, layout).cy);
   const shake = anims?.shake ?? new Animated.Value(0);
   const flash = anims?.flash ?? new Animated.Value(0);
   const punch = anims?.punch ?? new Animated.Value(0);
@@ -31,16 +43,25 @@ function UnitAvatarBase({ unit, anims, vfx, cellW, cellH }: Props) {
   const bob = anims?.bob ?? new Animated.Value(0);
   const facing = anims?.facing ?? (unit.isPlayer ? 1 : -1);
 
-  const left = Animated.multiply(x, cellW);
-  const top = Animated.multiply(y, cellH);
+  const left = Animated.subtract(cx, cellW / 2);
+  const top = Animated.subtract(cy, cellH / 2);
+
   const lunge = punch.interpolate({ inputRange: [0, 1], outputRange: [0, facing * (cellW * 0.32)] });
   const bobY = bob.interpolate({ inputRange: [0, 1], outputRange: [0, -3] });
   const ring = unit.isPlayer ? palette.blue : palette.red;
-  const size = Math.min(cellW, cellH) * 0.78;
   const ability = unit.abilityId ? ABILITIES[unit.abilityId] : null;
   const ready = !!ability && unit.ticksUntilAbility === 0 && unit.mana >= ability.manaCost && unit.isAlive;
   const hpPct = Math.max(0, Math.min(1, unit.hp / Math.max(1, unit.maxHp)));
   const mpPct = unit.maxMana > 0 ? Math.max(0, Math.min(1, unit.mana / unit.maxMana)) : 0;
+
+  const def = spriteFor({
+    heroId: unit.heroId,
+    icon: unit.icon,
+    heroClass: unit.heroClass,
+    isPlayer: unit.isPlayer,
+  });
+  const spriteH = Math.min(cellW, cellH) * 0.92;
+  const elementTint = unit.element && unit.element !== 'physical' ? ELEMENT_COLORS[unit.element] : undefined;
 
   return (
     <Animated.View
@@ -54,45 +75,47 @@ function UnitAvatarBase({ unit, anims, vfx, cellW, cellH }: Props) {
       ]}
     >
       <Animated.View style={{ alignItems: 'center', transform: [{ translateY: bobY }, { scale }], opacity }}>
-        {/* ground shadow */}
-        <View style={[styles.shadow, { width: size * 0.7, height: size * 0.18, bottom: -size * 0.06 }]} />
+        {/* Hex-ish ground shadow under the sprite */}
+        <View style={[styles.shadow, { width: spriteH * 0.85, height: spriteH * 0.16, bottom: -spriteH * 0.04 }]} />
 
         {unit.isAlive ? (
           <>
             {/* floating HP bar */}
-            <View style={[styles.hpWrap, { width: size * 0.92, borderColor: ring }]}>
+            <View style={[styles.hpWrap, { width: spriteH * 0.92, borderColor: ring }]}>
               <View style={[styles.hpFill, { width: `${hpPct * 100}%`, backgroundColor: unit.isPlayer ? '#54e06a' : '#ff6a55' }]} />
               {unit.shield > 0 && <View style={styles.hpShield} />}
             </View>
             {unit.maxMana > 0 && (
-              <View style={[styles.mpWrap, { width: size * 0.78 }]}>
+              <View style={[styles.mpWrap, { width: spriteH * 0.78 }]}>
                 <View style={[styles.mpFill, { width: `${mpPct * 100}%` }]} />
               </View>
             )}
 
-            <View style={[styles.tokenRing, { width: size, height: size, borderRadius: size / 2, borderColor: ring, shadowColor: ring }]}>
-              <HeroPortrait
-                size={size - 6}
-                heroClass={unit.heroClass}
-                rarity="common"
-                icon={unit.icon}
-                element={unit.element}
-                seed={unit.portraitSeed}
-                stars={unit.stars}
-                isEnemy={!unit.isPlayer}
-                showFrame={false}
+            {/* Team rim glow behind the sprite */}
+            <View style={[styles.rim, {
+              width: spriteH, height: spriteH,
+              borderRadius: spriteH / 2,
+              shadowColor: ring,
+            }]} />
+
+            <View style={[styles.spriteSlot, { width: spriteH, height: spriteH }]}>
+              <Sprite
+                def={def}
+                size={spriteH}
+                flip={!unit.isPlayer}
+                tint={elementTint}
+                tintOpacity={0.18}
               />
               <Animated.View
                 pointerEvents="none"
                 style={[StyleSheet.absoluteFillObject, {
-                  borderRadius: size / 2,
                   backgroundColor: '#ff5a5a',
-                  opacity: flash.interpolate({ inputRange: [0, 1], outputRange: [0, 0.6] }),
+                  opacity: flash.interpolate({ inputRange: [0, 1], outputRange: [0, 0.55] }),
                 }]}
               />
             </View>
 
-            {ready && <View style={[styles.readyGlow, { width: size + 8, height: size + 8, borderRadius: (size + 8) / 2 }]} />}
+            {ready && <View style={[styles.readyGlow, { width: spriteH + 8, height: spriteH + 8, borderRadius: (spriteH + 8) / 2 }]} />}
 
             {unit.statuses.length > 0 && (
               <View style={styles.statusStrip}>
@@ -110,8 +133,8 @@ function UnitAvatarBase({ unit, anims, vfx, cellW, cellH }: Props) {
             )}
           </>
         ) : (
-          <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: size * 0.5, opacity: 0.7 }}>🪦</Text>
+          <View style={{ width: spriteH, height: spriteH, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: spriteH * 0.5, opacity: 0.7 }}>🪦</Text>
           </View>
         )}
 
@@ -127,10 +150,13 @@ function UnitAvatarBase({ unit, anims, vfx, cellW, cellH }: Props) {
 
 const styles = StyleSheet.create({
   wrap: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
-  shadow: { position: 'absolute', borderRadius: 999, backgroundColor: '#00000055' },
-  tokenRing: {
-    borderWidth: 3, overflow: 'hidden', backgroundColor: '#0d1322',
-    shadowOpacity: 0.9, shadowRadius: 7, shadowOffset: { width: 0, height: 0 }, elevation: 7,
+  shadow: { position: 'absolute', borderRadius: 999, backgroundColor: '#00000077' },
+  spriteSlot: {
+    overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
+  },
+  rim: {
+    position: 'absolute',
+    shadowOpacity: 0.9, shadowRadius: 8, shadowOffset: { width: 0, height: 0 }, elevation: 6,
   },
   readyGlow: {
     position: 'absolute', top: -4, borderWidth: 2, borderColor: '#c9a3ff',
