@@ -4,6 +4,7 @@ import {
   ScrollView, StyleProp, Pressable,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView, Edge } from 'react-native-safe-area-context';
 import { palette, gradients, radius, spacing, shadow, font } from '../theme';
 
 // ----------------------------------------------------------------
@@ -183,13 +184,21 @@ export function Bar({
 }
 
 // ----------------------------------------------------------------
-// Generic vertical screen scaffold
+// Generic vertical screen scaffold. Wraps content in a SafeAreaView so
+// notches, status bars, and home-indicator gestures don't clip the UI.
+// `edges` defaults to all four sides; battle/scrolling screens can opt
+// out of bottom inset to keep their own padding control.
 // ----------------------------------------------------------------
-export function Screen({ children }: { children: React.ReactNode }) {
+export function Screen({
+  children,
+  edges = ['top', 'right', 'bottom', 'left'],
+}: { children: React.ReactNode; edges?: ReadonlyArray<Edge> }) {
   return (
     <View style={{ flex: 1, backgroundColor: palette.bgBot }}>
       <ScreenBackground />
-      {children}
+      <SafeAreaView style={{ flex: 1 }} edges={edges as Edge[]}>
+        {children}
+      </SafeAreaView>
     </View>
   );
 }

@@ -14,6 +14,9 @@ export default function LevelsScreen() {
   const [grinding, setGrinding] = useState<number | null>(null);
 
   async function handleAutoResolve(levelId: number, times: number) {
+    // Set the level context BEFORE auto-placing so the placement cap and
+    // grid bounds match the level we're about to fight (siege vs small).
+    setCurrentLevel(levelId);
     if (Object.keys(placedHeroes).length === 0) autoPlace();
     setGrinding(levelId);
     const r = await autoResolveLevel(levelId, times);

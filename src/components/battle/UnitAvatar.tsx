@@ -6,7 +6,7 @@ import FloatingNumber from '../FloatingNumber';
 import { ABILITIES } from '../../data/abilities';
 import { StatusEffectType } from '../../types';
 import { LiveUnit, UnitAnims, VfxNumber } from '../../hooks/useBattleReplay';
-import { hexLayout, hexCenter } from '../../utils/hex';
+import { HexLayout, hexCenter } from '../../utils/hex';
 import { palette } from '../../theme';
 import { ELEMENT_COLORS } from '../../data/heroes';
 
@@ -19,7 +19,7 @@ interface Props {
   unit: LiveUnit;
   anims?: UnitAnims;
   vfx: VfxNumber[];
-  layout: ReturnType<typeof hexLayout>;
+  layout: HexLayout;
 }
 
 function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {

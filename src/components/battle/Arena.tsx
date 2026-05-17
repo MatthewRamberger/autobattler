@@ -1,29 +1,26 @@
 import React from 'react';
 import { View, StyleSheet, Text } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import {
-  HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL,
-  hexLayout, hexCenter,
-} from '../../utils/hex';
+import { HexLayout, hexCenter } from '../../utils/hex';
 import { palette } from '../../theme';
 
 // A hex-tiled arena. Player side (left, blue) and enemy side (right, red)
 // are split by a contested no-place column rendered as a glowing river.
-export default function Arena({ width, height }: { width: number; height: number }) {
-  const layout = hexLayout(width, height);
-  const { hexW, hexH, totalW, totalH } = layout;
+//
+// `layout` is precomputed by the parent so the same hex sizing is shared
+// with the unit layer, projectiles, and any prep-screen previews.
+export default function Arena({ width, height, layout }: { width: number; height: number; layout: HexLayout }) {
+  const { hexW, hexH, totalW, totalH, grid } = layout;
+  const playerMaxCol = grid.playerMaxCol;
+  const enemyMinCol = grid.enemyMinCol;
+  const midColCx = hexCenter({ col: Math.floor((playerMaxCol + enemyMinCol) / 2), row: 0 }, layout).cx;
 
-  // Hex polygon path approximation using a CSS-style transform-rotated
-  // square. Implementing real polygons in pure RN without SVG is a pain,
-  // so each hex is drawn as a rotated rounded "rhombus" plus a centered
-  // top/bottom triangle pair. The cheap-and-cheerful way: stack a flat
-  // hexagon shape made from two trapezoids on top of each other.
   const cells: React.ReactNode[] = [];
-  for (let row = 0; row < HEX_ROWS; row++) {
-    for (let col = 0; col < HEX_COLS; col++) {
+  for (let row = 0; row < grid.rows; row++) {
+    for (let col = 0; col < grid.cols; col++) {
       const { cx, cy } = hexCenter({ col, row }, layout);
-      const isPlayer = col <= PLAYER_MAX_COL;
-      const isEnemy = col >= ENEMY_MIN_COL;
+      const isPlayer = col <= playerMaxCol;
+      const isEnemy = col >= enemyMinCol;
       const tint = isPlayer ? '#1f3c5e' : isEnemy ? '#5a2840' : '#3a3030';
       const tintHi = isPlayer ? '#2c5780' : isEnemy ? '#7a3a58' : '#534545';
       cells.push(
@@ -44,13 +41,11 @@ export default function Arena({ width, height }: { width: number; height: number
     }
   }
 
-  // Banner crystals / glowing pillars at each "team" corner.
   return (
     <View style={[styles.frame, { width: totalW + 16, height: totalH + 16 }]}>
       <LinearGradient colors={['#f6c945', '#a9781a']} style={styles.frameGrad} />
       <View style={[styles.field, { width: totalW, height: totalH }]}>
         <LinearGradient colors={['#16253a', '#0c1828']} style={styles.bg} />
-        {/* team halves as soft glows behind the tile mesh */}
         <LinearGradient
           colors={['#2a4f7a55', '#16253a00']}
           start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }}
@@ -64,11 +59,11 @@ export default function Arena({ width, height }: { width: number; height: number
 
         {cells}
 
-        {/* River across the contested column */}
+        {/* River across the contested column(s) */}
         <View
           pointerEvents="none"
           style={[styles.river, {
-            left: hexCenter({ col: 4, row: 0 }, layout).cx - hexW * 0.36,
+            left: midColCx - hexW * 0.36,
             width: hexW * 0.72,
             top: 0, bottom: 0,
           }]}
@@ -76,7 +71,7 @@ export default function Arena({ width, height }: { width: number; height: number
           <LinearGradient colors={['#6fd0ff66', '#1f6fd699']} style={StyleSheet.absoluteFill} />
         </View>
 
-        {/* Crown emblems at the corners — kept as tiny markers */}
+        {/* Crown emblems at the corners */}
         <Text style={[styles.tower, { left: 6, top: 2 }]}>🏰</Text>
         <Text style={[styles.tower, { left: 6, bottom: 2 }]}>🏰</Text>
         <Text style={[styles.tower, { right: 6, top: 2 }]}>🔥</Text>
@@ -130,11 +125,10 @@ export function Hex({ w, h, fill, stroke, hiFill }: { w: number; h: number; fill
           backgroundColor: hiFill, opacity: 0.4, borderRadius: 4,
         }} />
       )}
-      {/* Thin edge outline — overlaid using a darker tint inset slightly. */}
+      {/* Thin side outlines */}
       {stroke && (
         <View pointerEvents="none" style={{
           position: 'absolute', left: 0, top: triH, width: w, height: bodyH,
-          borderTopWidth: 0, borderBottomWidth: 0,
           borderLeftWidth: 1, borderRightWidth: 1,
           borderColor: stroke,
         }} />

@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGameStore } from '../store/gameStore';
 import { useBattleReplay } from '../hooks/useBattleReplay';
-import { hexLayout } from '../utils/hex';
+import { LEVELS } from '../data/levels';
+import { gridForLevel, hexLayout } from '../utils/hex';
 import { BattleLogEntry } from '../types';
 import Arena from '../components/battle/Arena';
 import UnitAvatar from '../components/battle/UnitAvatar';
@@ -15,23 +17,34 @@ import { ScreenBackground, GButton, Panel, Plate, palette, gradients } from '../
 const FRAME_PAD = 8;
 
 export default function BattleScreen() {
-  const { setScreen, clearPlacements, battleSpeed, setBattleSpeed } = useGameStore();
+  const { setScreen, clearPlacements, battleSpeed, setBattleSpeed, forfeitBattle, currentLevelId } = useGameStore();
+  const isArena = currentLevelId === -1;
+  const level = isArena ? null : LEVELS.find((l) => l.id === currentLevelId) ?? null;
+
   const screenW = Dimensions.get('window').width;
-  // Board budget: width minus side padding & frame padding; height capped
-  // so the hex map doesn't push the combat log offscreen.
+  const screenH = Dimensions.get('window').height;
+  const grid = useMemo(() => gridForLevel(level), [level]);
+
+  // Board budget: width minus side padding & frame padding; for small maps
+  // the height is bounded so the combat log stays visible. For siege maps
+  // we let the board grow taller and the user scrolls horizontally inside
+  // the Arena container.
   const fieldWBudget = screenW - 20 - FRAME_PAD * 2;
-  const fieldHBudget = Math.min(fieldWBudget * 0.72, 280);
+  const fieldHBudget = grid.size === 'siege'
+    ? Math.min(screenH * 0.48, 360)
+    : Math.min(fieldWBudget * 0.72, 240);
+
   const layout = useMemo(
-    () => hexLayout(fieldWBudget, fieldHBudget),
-    [fieldWBudget, fieldHBudget]
+    () => hexLayout(fieldWBudget, fieldHBudget, grid),
+    [fieldWBudget, fieldHBudget, grid]
   );
   const fieldW = layout.totalW;
   const fieldH = layout.totalH;
 
   const {
-    isArena, level, phase, units, log, vfx, projectiles, tick, result,
+    isArena: isArenaReplay, level: levelReplay, phase, units, log, vfx, projectiles, tick, result,
     getAnims, togglePause, fastForward,
-  } = useBattleReplay(layout);
+  } = useBattleReplay(layout, grid);
   const [logFilter, setLogFilter] = useState<'all' | 'crits' | 'heals' | 'abilities' | 'deaths'>('all');
 
   const players = units.filter((u) => u.isPlayer);
@@ -48,20 +61,41 @@ export default function BattleScreen() {
     return true;
   });
 
-  const goCampaign = () => { clearPlacements(); setScreen(isArena ? 'arena' : 'levels'); };
-  const goRetry = () => setScreen(isArena ? 'arena' : 'battle-prep');
+  const goCampaign = () => { clearPlacements(); setScreen(isArenaReplay ? 'arena' : 'levels'); };
+  const goRetry = () => setScreen(isArenaReplay ? 'arena' : 'battle-prep');
+
+  const onForfeit = () => {
+    if (phase === 'done') { goCampaign(); return; }
+    Alert.alert(
+      'Forfeit battle?',
+      'This counts as a loss. No gold or XP awarded.',
+      [
+        { text: 'Keep fighting', style: 'cancel' },
+        { text: 'Forfeit', style: 'destructive', onPress: () => { forfeitBattle(); clearPlacements(); setScreen(isArenaReplay ? 'arena' : 'levels'); } },
+      ]
+    );
+  };
+
+  // Decide whether the arena needs to horizontal-scroll. Siege boards are
+  // always wider than the screen budget, normal boards never are.
+  const needsScroll = layout.totalW > fieldWBudget + 2;
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'right', 'left', 'bottom']}>
       <ScreenBackground />
 
       {/* HUD */}
       <View style={styles.hud}>
+        <TouchableOpacity onPress={onForfeit} style={styles.exitBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <LinearGradient colors={gradients.panel} style={styles.exitBtnBg}>
+            <Text style={styles.exitChevron}>‹</Text>
+          </LinearGradient>
+        </TouchableOpacity>
         <CrownCount tint={palette.blue} label="ALLIES" alive={aliveP} total={players.length} />
         <View style={styles.hudCenter}>
           <LinearGradient colors={gradients.banner} style={styles.banner}>
             <Text style={styles.bannerText} numberOfLines={1}>
-              {isArena ? `ARENA WAVE` : (level?.name ?? 'BATTLE')}
+              {isArenaReplay ? 'ARENA WAVE' : (levelReplay?.name ?? 'BATTLE')}
             </Text>
           </LinearGradient>
           <View style={styles.tickPill}>
@@ -75,18 +109,19 @@ export default function BattleScreen() {
 
       {/* Arena */}
       <View style={styles.arenaArea}>
-        <View style={{ width: fieldW + FRAME_PAD * 2, height: fieldH + FRAME_PAD * 2 }}>
-          <Arena width={fieldW} height={fieldH} />
-          <View style={[styles.unitLayer, { left: FRAME_PAD, top: FRAME_PAD, width: fieldW, height: fieldH }]} pointerEvents="none">
-            {units.map((u) => (
-              <UnitAvatar key={u.id} unit={u} anims={getAnims(u.id)} layout={layout}
-                vfx={vfx.filter((v) => v.unitId === u.id)} />
-            ))}
-            {projectiles.map((p) => (
-              <Projectile key={p.id} proj={p} layout={layout} />
-            ))}
-          </View>
-        </View>
+        {needsScroll ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator
+            contentContainerStyle={{ paddingHorizontal: 8 }}
+            // Center the initial scroll on the action.
+            contentOffset={{ x: Math.max(0, (fieldW - fieldWBudget) / 2), y: 0 }}
+          >
+            <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} />
+          </ScrollView>
+        ) : (
+          <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} />
+        )}
       </View>
 
       {/* Controls */}
@@ -147,12 +182,36 @@ export default function BattleScreen() {
               </Plate>
               <View style={styles.btnRow}>
                 <GButton label="Retry" variant="purple" onPress={goRetry} style={{ flex: 1 }} />
-                <GButton label={isArena ? 'Arena' : 'Campaign'} variant="gold" onPress={goCampaign} style={{ flex: 1 }} />
+                <GButton label={isArenaReplay ? 'Arena' : 'Campaign'} variant="gold" onPress={goCampaign} style={{ flex: 1 }} />
               </View>
             </LinearGradient>
           </View>
         </View>
       )}
+    </SafeAreaView>
+  );
+}
+
+function ArenaCanvas({
+  fieldW, fieldH, layout, units, projectiles, vfx, getAnims,
+}: {
+  fieldW: number; fieldH: number;
+  layout: ReturnType<typeof hexLayout>;
+  units: any[]; projectiles: any[]; vfx: any[];
+  getAnims: (id: string) => any;
+}) {
+  return (
+    <View style={{ width: fieldW + FRAME_PAD * 2, height: fieldH + FRAME_PAD * 2 }}>
+      <Arena width={fieldW} height={fieldH} layout={layout} />
+      <View style={[styles.unitLayer, { left: FRAME_PAD, top: FRAME_PAD, width: fieldW, height: fieldH }]} pointerEvents="none">
+        {units.map((u) => (
+          <UnitAvatar key={u.id} unit={u} anims={getAnims(u.id)} layout={layout}
+            vfx={vfx.filter((v: any) => v.unitId === u.id)} />
+        ))}
+        {projectiles.map((p) => (
+          <Projectile key={p.id} proj={p} layout={layout} />
+        ))}
+      </View>
     </View>
   );
 }
@@ -200,26 +259,32 @@ function logColor(type: BattleLogEntry['type']) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.bgBot },
-  hud: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 14, paddingBottom: 6, gap: 8 },
+  hud: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 10, paddingBottom: 6, gap: 6 },
   hudCenter: { flex: 1, alignItems: 'center', gap: 4 },
-  crownBox: { width: 70 },
+  exitBtn: { width: 34, height: 34 },
+  exitBtnBg: {
+    width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: palette.goldDeep,
+  },
+  exitChevron: { color: palette.gold, fontSize: 22, fontWeight: '900', marginTop: -2 },
+  crownBox: { width: 56 },
   crownLabel: { fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
-  crownCount: { color: '#fff', fontSize: 20, fontWeight: '900' },
-  crownTotal: { color: palette.textMute, fontSize: 12, fontWeight: '800' },
-  banner: { borderRadius: 10, paddingHorizontal: 16, paddingVertical: 5, borderWidth: 2, borderColor: '#fff6' },
-  bannerText: { color: '#5a3c08', fontWeight: '900', fontSize: 13, letterSpacing: 0.5 },
+  crownCount: { color: '#fff', fontSize: 18, fontWeight: '900' },
+  crownTotal: { color: palette.textMute, fontSize: 11, fontWeight: '800' },
+  banner: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 2, borderColor: '#fff6' },
+  bannerText: { color: '#5a3c08', fontWeight: '900', fontSize: 12, letterSpacing: 0.5 },
   tickPill: { backgroundColor: palette.panelDeep, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 2, borderWidth: 1, borderColor: '#0007' },
   tickText: { color: palette.textSoft, fontWeight: '800', fontSize: 10, letterSpacing: 1 },
-  arenaArea: { alignItems: 'center', paddingVertical: 8 },
+  arenaArea: { alignItems: 'center', paddingVertical: 6 },
   unitLayer: { position: 'absolute' },
   controls: { flexDirection: 'row', justifyContent: 'center', gap: 12, paddingVertical: 4 },
   round: { borderRadius: 22 },
   roundGrad: {
-    width: 50, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+    width: 48, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: palette.goldDark,
   },
-  roundText: { color: palette.gold, fontWeight: '900', fontSize: 15 },
-  logPanel: { flex: 1, marginHorizontal: 10, marginBottom: 10 },
+  roundText: { color: palette.gold, fontWeight: '900', fontSize: 14 },
+  logPanel: { flex: 1, marginHorizontal: 10, marginBottom: 8 },
   logHead: { flexDirection: 'row', alignItems: 'center', padding: 8, gap: 6 },
   logTitle: { color: palette.gold, fontSize: 10, fontWeight: '900', letterSpacing: 1, flex: 1 },
   logFilters: { flexDirection: 'row', gap: 3 },
