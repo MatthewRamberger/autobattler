@@ -1,63 +1,144 @@
 import React from 'react';
 import { View, StyleSheet, Text } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { GRID_COLS, GRID_ROWS } from '../../hooks/useBattleReplay';
+import {
+  HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL,
+  hexLayout, hexCenter,
+} from '../../utils/hex';
 import { palette } from '../../theme';
 
-// A Clash-Royale-style arena: blue/green tiled field split into two team
-// halves by a golden river with wooden bridges, framed in ornate gold with
-// crown-tower emblems in the corners.
+// A hex-tiled arena. Player side (left, blue) and enemy side (right, red)
+// are split by a contested no-place column rendered as a glowing river.
 export default function Arena({ width, height }: { width: number; height: number }) {
-  const cellW = width / GRID_COLS;
-  const cellH = height / GRID_ROWS;
-  return (
-    <View style={[styles.frame, { width: width + 16, height: height + 16 }]}>
-      <LinearGradient colors={['#f6c945', '#a9781a']} style={styles.frameGrad} />
-      <View style={[styles.field, { width, height }]}>
-        {/* team-tinted ground */}
-        <LinearGradient colors={['#234a6e', '#16314a']} style={styles.half} />
-        <LinearGradient colors={['#5a233a', '#3a1528']} style={[styles.half, { left: width / 2 }]} />
+  const layout = hexLayout(width, height);
+  const { hexW, hexH, totalW, totalH } = layout;
 
-        {/* checker tiles */}
-        {Array.from({ length: GRID_ROWS }).map((_, r) =>
-          Array.from({ length: GRID_COLS }).map((_, c) => (
-            <View
-              key={`${r}-${c}`}
-              style={{
-                position: 'absolute', left: c * cellW, top: r * cellH, width: cellW, height: cellH,
-                backgroundColor: (r + c) % 2 === 0 ? '#ffffff10' : 'transparent',
-                borderColor: '#ffffff10', borderWidth: StyleSheet.hairlineWidth,
-              }}
-            />
-          ))
-        )}
-
-        {/* central river */}
-        <View style={[styles.river, { left: width / 2 - cellW * 0.42, width: cellW * 0.84 }]}>
-          <LinearGradient colors={['#6fd0ff', '#1f6fd6']} style={StyleSheet.absoluteFill} />
+  // Hex polygon path approximation using a CSS-style transform-rotated
+  // square. Implementing real polygons in pure RN without SVG is a pain,
+  // so each hex is drawn as a rotated rounded "rhombus" plus a centered
+  // top/bottom triangle pair. The cheap-and-cheerful way: stack a flat
+  // hexagon shape made from two trapezoids on top of each other.
+  const cells: React.ReactNode[] = [];
+  for (let row = 0; row < HEX_ROWS; row++) {
+    for (let col = 0; col < HEX_COLS; col++) {
+      const { cx, cy } = hexCenter({ col, row }, layout);
+      const isPlayer = col <= PLAYER_MAX_COL;
+      const isEnemy = col >= ENEMY_MIN_COL;
+      const tint = isPlayer ? '#1f3c5e' : isEnemy ? '#5a2840' : '#3a3030';
+      const tintHi = isPlayer ? '#2c5780' : isEnemy ? '#7a3a58' : '#534545';
+      cells.push(
+        <View
+          key={`${row}-${col}`}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: cx - hexW / 2,
+            top: cy - hexH / 2,
+            width: hexW,
+            height: hexH,
+          }}
+        >
+          <Hex w={hexW} h={hexH} fill={tint} stroke={'#0008'} hiFill={tintHi} />
         </View>
-        {/* bridges (rows 0 and 2) */}
-        {[0, 2].map((r) => (
-          <View
-            key={r}
-            style={[styles.bridge, {
-              left: width / 2 - cellW * 0.5, top: r * cellH + cellH * 0.2,
-              width: cellW, height: cellH * 0.6,
-            }]}
-          >
-            <LinearGradient colors={['#b9803e', '#7c4a1c']} style={StyleSheet.absoluteFill} />
-            {[0.2, 0.4, 0.6, 0.8].map((p) => (
-              <View key={p} style={[styles.plank, { left: `${p * 100}%` }]} />
-            ))}
-          </View>
-        ))}
+      );
+    }
+  }
 
-        {/* crown-tower emblems */}
-        <Text style={[styles.tower, { left: 4, top: 2 }]}>🏰</Text>
-        <Text style={[styles.tower, { left: 4, bottom: 2 }]}>🏰</Text>
-        <Text style={[styles.tower, { right: 4, top: 2 }]}>🔥</Text>
-        <Text style={[styles.tower, { right: 4, bottom: 2 }]}>🔥</Text>
+  // Banner crystals / glowing pillars at each "team" corner.
+  return (
+    <View style={[styles.frame, { width: totalW + 16, height: totalH + 16 }]}>
+      <LinearGradient colors={['#f6c945', '#a9781a']} style={styles.frameGrad} />
+      <View style={[styles.field, { width: totalW, height: totalH }]}>
+        <LinearGradient colors={['#16253a', '#0c1828']} style={styles.bg} />
+        {/* team halves as soft glows behind the tile mesh */}
+        <LinearGradient
+          colors={['#2a4f7a55', '#16253a00']}
+          start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }}
+          style={[styles.halfGlow, { left: 0, width: totalW * 0.5 }]}
+        />
+        <LinearGradient
+          colors={['#5a233a00', '#5a233a55']}
+          start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }}
+          style={[styles.halfGlow, { left: totalW * 0.5, width: totalW * 0.5 }]}
+        />
+
+        {cells}
+
+        {/* River across the contested column */}
+        <View
+          pointerEvents="none"
+          style={[styles.river, {
+            left: hexCenter({ col: 4, row: 0 }, layout).cx - hexW * 0.36,
+            width: hexW * 0.72,
+            top: 0, bottom: 0,
+          }]}
+        >
+          <LinearGradient colors={['#6fd0ff66', '#1f6fd699']} style={StyleSheet.absoluteFill} />
+        </View>
+
+        {/* Crown emblems at the corners — kept as tiny markers */}
+        <Text style={[styles.tower, { left: 6, top: 2 }]}>🏰</Text>
+        <Text style={[styles.tower, { left: 6, bottom: 2 }]}>🏰</Text>
+        <Text style={[styles.tower, { right: 6, top: 2 }]}>🔥</Text>
+        <Text style={[styles.tower, { right: 6, bottom: 2 }]}>🔥</Text>
       </View>
+    </View>
+  );
+}
+
+// A proper pointy-top hexagon built without SVG:
+//   - center rectangle (full width, middle 50% of height)
+//   - top triangle    (CSS border-triangle hack)
+//   - bottom triangle (mirrored)
+// The triangle hack uses 0×0 Views with asymmetric borders, which React
+// Native supports the same way the browser does.
+export function Hex({ w, h, fill, stroke, hiFill }: { w: number; h: number; fill: string; stroke?: string; hiFill?: string }) {
+  const triH = h * 0.25;
+  const bodyH = h - triH * 2;
+  return (
+    <View style={{ width: w, height: h }}>
+      {/* top triangle pointing up */}
+      <View style={{
+        position: 'absolute', left: 0, top: 0,
+        width: 0, height: 0,
+        borderStyle: 'solid',
+        borderLeftWidth: w / 2, borderRightWidth: w / 2,
+        borderBottomWidth: triH, borderTopWidth: 0,
+        borderLeftColor: 'transparent', borderRightColor: 'transparent',
+        borderBottomColor: fill, borderTopColor: 'transparent',
+      }} />
+      {/* center body */}
+      <View style={{
+        position: 'absolute', left: 0, top: triH, width: w, height: bodyH,
+        backgroundColor: fill,
+      }} />
+      {/* bottom triangle pointing down */}
+      <View style={{
+        position: 'absolute', left: 0, top: triH + bodyH,
+        width: 0, height: 0,
+        borderStyle: 'solid',
+        borderLeftWidth: w / 2, borderRightWidth: w / 2,
+        borderTopWidth: triH, borderBottomWidth: 0,
+        borderLeftColor: 'transparent', borderRightColor: 'transparent',
+        borderTopColor: fill, borderBottomColor: 'transparent',
+      }} />
+      {/* Inner highlight band */}
+      {hiFill && (
+        <View pointerEvents="none" style={{
+          position: 'absolute', left: w * 0.22, top: h * 0.42,
+          width: w * 0.56, height: h * 0.18,
+          backgroundColor: hiFill, opacity: 0.4, borderRadius: 4,
+        }} />
+      )}
+      {/* Thin edge outline — overlaid using a darker tint inset slightly. */}
+      {stroke && (
+        <View pointerEvents="none" style={{
+          position: 'absolute', left: 0, top: triH, width: w, height: bodyH,
+          borderTopWidth: 0, borderBottomWidth: 0,
+          borderLeftWidth: 1, borderRightWidth: 1,
+          borderColor: stroke,
+        }} />
+      )}
     </View>
   );
 }
@@ -65,10 +146,9 @@ export default function Arena({ width, height }: { width: number; height: number
 const styles = StyleSheet.create({
   frame: { borderRadius: 22, padding: 8, alignSelf: 'center' },
   frameGrad: { ...StyleSheet.absoluteFillObject, borderRadius: 22, borderWidth: 2, borderColor: '#fff5' },
-  field: { borderRadius: 14, overflow: 'hidden', backgroundColor: '#16314a' },
-  half: { position: 'absolute', top: 0, bottom: 0, width: '50%' },
-  river: { position: 'absolute', top: 0, bottom: 0, opacity: 0.5 },
-  bridge: { position: 'absolute', borderRadius: 4, overflow: 'hidden', borderWidth: 1, borderColor: '#3a2410' },
-  plank: { position: 'absolute', top: 0, bottom: 0, width: 2, backgroundColor: '#00000033' },
-  tower: { position: 'absolute', fontSize: 16, opacity: 0.55 },
+  field: { borderRadius: 14, overflow: 'hidden', backgroundColor: '#0c1828' },
+  bg: { ...StyleSheet.absoluteFillObject },
+  halfGlow: { position: 'absolute', top: 0, bottom: 0 },
+  river: { position: 'absolute', opacity: 0.6 },
+  tower: { position: 'absolute', fontSize: 16, opacity: 0.65 },
 });

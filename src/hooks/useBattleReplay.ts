@@ -6,14 +6,20 @@ import {
 import { computeBattle, buildPlayerUnit, buildEnemyUnit } from '../utils/battleEngine';
 import { LEVELS } from '../data/levels';
 import { useGameStore, getHeroEffectiveStats, generateArenaWave } from '../store/gameStore';
+import { HEX_COLS, HEX_ROWS, hexLayout, hexCenter } from '../utils/hex';
 
-export const GRID_COLS = 10;
-export const GRID_ROWS = 3;
+// Re-export for any old callers; the field is sized by hex layout now.
+export const GRID_COLS = HEX_COLS;
+export const GRID_ROWS = HEX_ROWS;
 const BASE_TICK_MS = 460;
 
 export interface UnitAnims {
-  x: Animated.Value;            // grid column (0..9)
-  y: Animated.Value;            // grid row (0..2)
+  // Pixel-center coordinates in board space. Hex offset makes a (col,row)→
+  // pixel mapping non-linear in row parity, so move tweens animate pixels
+  // directly. The owning component is responsible for passing the layout
+  // when it wants to map a fresh position back to pixels.
+  x: Animated.Value;
+  y: Animated.Value;
   flash: Animated.Value;        // 0..1 hit flash
   shake: Animated.Value;        // px shake
   punch: Animated.Value;        // 0..1 attack lunge
@@ -48,8 +54,11 @@ export type Phase = 'running' | 'paused' | 'done';
  * timers / animation frames are torn down on unmount and every state write is
  * guarded by a mounted flag, so finishing or leaving a battle can never set
  * state on an unmounted tree or leak an interval (the old finish-time crash).
+ *
+ * `layout` is the hex pixel layout of the rendered board — passed in by the
+ * screen so move tweens can target real pixel centers.
  */
-export function useBattleReplay() {
+export function useBattleReplay(layout: ReturnType<typeof hexLayout>) {
   const store = useGameStore();
   const {
     currentLevelId, heroes, placedHeroes, applyBattleRewards,
@@ -84,10 +93,16 @@ export function useBattleReplay() {
     if (mounted.current) setter(value);
   }, []);
 
+  // Keep latest layout in a ref so the makeAnims/move closures always see
+  // the up-to-date pixel mapping if the screen resizes mid-battle.
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+
   const makeAnims = useCallback((pos: GridPosition, facing: 1 | -1): UnitAnims => {
+    const c = hexCenter(pos, layoutRef.current);
     const a: UnitAnims = {
-      x: new Animated.Value(pos.col),
-      y: new Animated.Value(pos.row),
+      x: new Animated.Value(c.cx),
+      y: new Animated.Value(c.cy),
       flash: new Animated.Value(0),
       shake: new Animated.Value(0),
       punch: new Animated.Value(0),
@@ -238,10 +253,13 @@ export function useBattleReplay() {
               const to = ev.toPosition;
               patch(ev.sourceId, (u) => ({ ...u, position: to }));
               const a = map.get(ev.sourceId);
-              if (a) fx.push(() => Animated.parallel([
-                Animated.timing(a.x, { toValue: to.col, duration: 230, useNativeDriver: false }),
-                Animated.timing(a.y, { toValue: to.row, duration: 230, useNativeDriver: false }),
-              ]).start());
+              if (a) {
+                const target = hexCenter(to, layoutRef.current);
+                fx.push(() => Animated.parallel([
+                  Animated.timing(a.x, { toValue: target.cx, duration: 230, useNativeDriver: false }),
+                  Animated.timing(a.y, { toValue: target.cy, duration: 230, useNativeDriver: false }),
+                ]).start());
+              }
             }
             break;
           case 'attack':

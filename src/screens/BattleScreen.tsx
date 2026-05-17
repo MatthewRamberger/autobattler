@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGameStore } from '../store/gameStore';
-import { useBattleReplay, GRID_COLS, GRID_ROWS } from '../hooks/useBattleReplay';
+import { useBattleReplay } from '../hooks/useBattleReplay';
+import { hexLayout } from '../utils/hex';
 import { BattleLogEntry } from '../types';
 import Arena from '../components/battle/Arena';
 import UnitAvatar from '../components/battle/UnitAvatar';
@@ -15,17 +16,23 @@ const FRAME_PAD = 8;
 
 export default function BattleScreen() {
   const { setScreen, clearPlacements, battleSpeed, setBattleSpeed } = useGameStore();
+  const screenW = Dimensions.get('window').width;
+  // Board budget: width minus side padding & frame padding; height capped
+  // so the hex map doesn't push the combat log offscreen.
+  const fieldWBudget = screenW - 20 - FRAME_PAD * 2;
+  const fieldHBudget = Math.min(fieldWBudget * 0.72, 280);
+  const layout = useMemo(
+    () => hexLayout(fieldWBudget, fieldHBudget),
+    [fieldWBudget, fieldHBudget]
+  );
+  const fieldW = layout.totalW;
+  const fieldH = layout.totalH;
+
   const {
     isArena, level, phase, units, log, vfx, projectiles, tick, result,
     getAnims, togglePause, fastForward,
-  } = useBattleReplay();
+  } = useBattleReplay(layout);
   const [logFilter, setLogFilter] = useState<'all' | 'crits' | 'heals' | 'abilities' | 'deaths'>('all');
-
-  const screenW = Dimensions.get('window').width;
-  const fieldW = screenW - 20 - FRAME_PAD * 2;
-  const cellW = fieldW / GRID_COLS;
-  const cellH = cellW;
-  const fieldH = cellH * GRID_ROWS;
 
   const players = units.filter((u) => u.isPlayer);
   const enemies = units.filter((u) => !u.isPlayer);
@@ -72,11 +79,11 @@ export default function BattleScreen() {
           <Arena width={fieldW} height={fieldH} />
           <View style={[styles.unitLayer, { left: FRAME_PAD, top: FRAME_PAD, width: fieldW, height: fieldH }]} pointerEvents="none">
             {units.map((u) => (
-              <UnitAvatar key={u.id} unit={u} anims={getAnims(u.id)} cellW={cellW} cellH={cellH}
+              <UnitAvatar key={u.id} unit={u} anims={getAnims(u.id)} layout={layout}
                 vfx={vfx.filter((v) => v.unitId === u.id)} />
             ))}
             {projectiles.map((p) => (
-              <Projectile key={p.id} proj={p} cellW={cellW} cellH={cellH} />
+              <Projectile key={p.id} proj={p} layout={layout} />
             ))}
           </View>
         </View>

@@ -15,6 +15,7 @@ import {
   STRONGHOLD_BUILDINGS, strongholdGoldMultiplier, strongholdExpMultiplier,
   strongholdShardBonus,
 } from '../data/stronghold';
+import { HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL } from '../utils/hex';
 
 const SAVE_KEY = '@autobattler/save_v2';
 
@@ -320,29 +321,40 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const dps = unlocked.filter((h) => ['Berserker', 'Rogue', 'Monk'].includes(h.heroClass));
     const ranged = unlocked.filter((h) => ['Archer', 'Mage', 'Cleric', 'Druid', 'Necromancer'].includes(h.heroClass));
 
+    // Hex grid is 9 wide × 5 tall. Players own cols 0..PLAYER_MAX_COL (3).
+    // Use the middle three rows for placements so we don't clip on small screens.
     const newPlacements: Record<string, GridPosition> = {};
-    const rowOf = (i: number) => [1, 0, 2, 1, 0][i] ?? 1;
-    let row = 0;
+    const tankRows = [2, 1, 3];
+    const dpsRows = [2, 1, 3];
+    const rangedRows = [2, 1, 3];
+    const claim = (col: number, row: number, heroId: string) => {
+      if (Object.keys(newPlacements).length >= 5) return false;
+      if (Object.values(newPlacements).some((p) => p.col === col && p.row === row)) return false;
+      newPlacements[heroId] = { col, row };
+      return true;
+    };
+    let i = 0;
     for (const h of tanks.slice(0, 2)) {
-      newPlacements[h.id] = { col: 3, row };
-      row = (row + 1) % 3;
+      if (!claim(PLAYER_MAX_COL, tankRows[i % tankRows.length], h.id)) break;
+      i++;
     }
-    let r2 = 0;
+    i = 0;
     for (const h of dps.slice(0, 2)) {
-      newPlacements[h.id] = { col: 2, row: r2 };
-      r2 = (r2 + 1) % 3;
+      if (!claim(PLAYER_MAX_COL - 1, dpsRows[i % dpsRows.length], h.id)) break;
+      i++;
     }
-    let r3 = 0;
+    i = 0;
     for (const h of ranged.slice(0, 2)) {
-      if (Object.keys(newPlacements).length >= 5) break;
-      newPlacements[h.id] = { col: 0, row: r3 };
-      r3 = (r3 + 1) % 3;
+      if (!claim(0, rangedRows[i % rangedRows.length], h.id)) break;
+      i++;
     }
-    // If not enough, fill from any leftover.
+    // Fill remaining slots into the second column from the back.
+    i = 0;
     for (const h of unlocked) {
       if (Object.keys(newPlacements).length >= 5) break;
       if (newPlacements[h.id]) continue;
-      newPlacements[h.id] = { col: 1, row: rowOf(Object.keys(newPlacements).length) };
+      claim(1, rangedRows[i % rangedRows.length], h.id);
+      i++;
     }
     set({ placedHeroes: newPlacements });
   },
@@ -1094,11 +1106,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
           }
         }
         const achievements = { ...buildInitialAchievements(), ...(parsed.achievements ?? {}) };
+        // Hex grid migration: saves from the old 10×3 layout used cols 0..4
+        // for players; the new 9×5 hex layout uses cols 0..3. Clamp to keep
+        // everything in bounds rather than crash on placement.
+        const clampPlayerPos = (p: GridPosition): GridPosition => ({
+          col: Math.max(0, Math.min(PLAYER_MAX_COL, p.col)),
+          row: Math.max(0, Math.min(HEX_ROWS - 1, p.row)),
+        });
+        const placedHeroes = parsed.placedHeroes
+          ? Object.fromEntries(
+              Object.entries(parsed.placedHeroes as Record<string, GridPosition>)
+                .map(([id, p]) => [id, clampPlayerPos(p)])
+            )
+          : {};
+        const loadouts = parsed.loadouts
+          ? Object.fromEntries(
+              Object.entries(parsed.loadouts as Record<string, { name: string; placements: Record<string, GridPosition> }>)
+                .map(([slot, lo]) => [slot, {
+                  name: lo.name,
+                  placements: Object.fromEntries(
+                    Object.entries(lo.placements).map(([id, p]) => [id, clampPlayerPos(p)])
+                  ),
+                }])
+            )
+          : {};
         set({
           ...parsed,
           heroes,
           equipment,
           achievements,
+          placedHeroes,
+          loadouts,
           hydrated: true,
         });
       } else {
@@ -1321,16 +1359,29 @@ export function generateArenaWave(wave: number): EnemyConfig[] {
   };
   const enemyCount = Math.min(5, 2 + Math.floor(wave / 2));
   const lvl = Math.max(1, Math.floor(1 + wave * 1.2));
+  // Scatter enemies across cols ENEMY_MIN_COL..HEX_COLS-1 and the middle
+  // three rows (1..3) to keep the layout symmetric with player auto-place.
+  const slotCols = [ENEMY_MIN_COL, ENEMY_MIN_COL + 1, ENEMY_MIN_COL + 2];
+  const slotRows = [2, 1, 3, 2, 1];
+  const used = new Set<string>();
   const enemies: EnemyConfig[] = [];
   for (let i = 0; i < enemyCount; i++) {
     const klass = tiers[Math.floor(Math.random() * tiers.length)];
     const ico = icons[klass]?.[Math.floor(Math.random() * (icons[klass]?.length ?? 1))] ?? '👤';
     const element = elements[Math.floor(Math.random() * elements.length)];
+    let col = slotCols[i % slotCols.length];
+    let row = slotRows[i % slotRows.length];
+    let attempts = 0;
+    while (used.has(`${col},${row}`) && attempts++ < 10) {
+      col = slotCols[Math.floor(Math.random() * slotCols.length)];
+      row = slotRows[Math.floor(Math.random() * slotRows.length)];
+    }
+    used.add(`${col},${row}`);
     enemies.push({
       name: `${klass} #${wave}-${i+1}`,
       heroClass: klass,
       level: lvl,
-      position: { col: 7 + (i % 3), row: i % 3 },
+      position: { col, row },
       icon: ico,
       element,
       stars: wave >= 10 && i === 0 ? 1 : 0,
