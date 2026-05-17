@@ -358,7 +358,7 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
             }
             break;
           case 'spawn':
-            if (ev.unit && !next.some((p) => p.id === ev.unit!.id)) {
+            if (ev.unit && ev.unit.position && !next.some((p) => p.id === ev.unit!.id)) {
               const su = ev.unit;
               if (!map.has(su.id)) map.set(su.id, makeAnims(su.position, su.isPlayer ? 1 : -1));
               const a = map.get(su.id)!;
