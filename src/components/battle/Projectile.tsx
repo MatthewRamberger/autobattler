@@ -11,17 +11,20 @@ const GLYPH: Record<Element, string> = {
 
 interface Props { proj: Proj; layout: HexLayout; }
 
+// Projectile is positioned via transform translate (not left/top) so the
+// animation can use the native driver. The wrap sits at the start hex's
+// pixel top-left and translates toward the target as anim goes 0 → 1.
 export default function Projectile({ proj, layout }: Props) {
   const from = hexCenter(proj.from, layout);
   const to = hexCenter(proj.to, layout);
   const { hexW, hexH } = layout;
   const fontSize = Math.min(hexW, hexH) * 0.34;
 
-  const left = proj.anim.interpolate({
-    inputRange: [0, 1], outputRange: [from.cx - hexW / 2, to.cx - hexW / 2],
+  const translateX = proj.anim.interpolate({
+    inputRange: [0, 1], outputRange: [0, to.cx - from.cx],
   });
-  const top = proj.anim.interpolate({
-    inputRange: [0, 1], outputRange: [from.cy - hexH / 2, to.cy - hexH / 2],
+  const translateY = proj.anim.interpolate({
+    inputRange: [0, 1], outputRange: [0, to.cy - from.cy],
   });
   const lift = proj.anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -hexH * 0.35, 0] });
 
@@ -29,9 +32,12 @@ export default function Projectile({ proj, layout }: Props) {
     <Animated.View
       pointerEvents="none"
       style={{
-        position: 'absolute', left, top, width: hexW, height: hexH,
+        position: 'absolute',
+        left: from.cx - hexW / 2,
+        top: from.cy - hexH / 2,
+        width: hexW, height: hexH,
         alignItems: 'center', justifyContent: 'center',
-        transform: [{ translateY: lift }],
+        transform: [{ translateX }, { translateY }, { translateY: lift }],
       }}
     >
       <Text style={{ fontSize, color: ELEMENT_COLORS[proj.element] }}>
