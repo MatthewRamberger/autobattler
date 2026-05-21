@@ -258,8 +258,8 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
               if (a) {
                 const target = hexCenter(to, layoutRef.current);
                 fx.push(() => Animated.parallel([
-                  Animated.timing(a.x, { toValue: target.cx, duration: 230, useNativeDriver: false }),
-                  Animated.timing(a.y, { toValue: target.cy, duration: 230, useNativeDriver: false }),
+                  Animated.timing(a.x, { toValue: target.cx, duration: 230, useNativeDriver: true }),
+                  Animated.timing(a.y, { toValue: target.cy, duration: 230, useNativeDriver: true }),
                 ]).start());
               }
             }
@@ -269,8 +269,8 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
             if (ev.sourceId) {
               const a = map.get(ev.sourceId);
               if (a && !reduce) fx.push(() => Animated.sequence([
-                Animated.timing(a.punch, { toValue: 1, duration: 110, useNativeDriver: false }),
-                Animated.timing(a.punch, { toValue: 0, duration: 160, useNativeDriver: false }),
+                Animated.timing(a.punch, { toValue: 1, duration: 110, useNativeDriver: true }),
+                Animated.timing(a.punch, { toValue: 0, duration: 160, useNativeDriver: true }),
               ]).start());
             }
             if (ev.kind === 'projectile' && ev.sourceId && ev.targetId) {
@@ -290,9 +290,9 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
               if (a && !reduce) fx.push(() => {
                 a.shake.setValue(0);
                 Animated.sequence([
-                  Animated.timing(a.shake, { toValue: 5, duration: 40, useNativeDriver: false }),
-                  Animated.timing(a.shake, { toValue: -5, duration: 40, useNativeDriver: false }),
-                  Animated.timing(a.shake, { toValue: 0, duration: 40, useNativeDriver: false }),
+                  Animated.timing(a.shake, { toValue: 5, duration: 40, useNativeDriver: true }),
+                  Animated.timing(a.shake, { toValue: -5, duration: 40, useNativeDriver: true }),
+                  Animated.timing(a.shake, { toValue: 0, duration: 40, useNativeDriver: true }),
                 ]).start();
                 a.flash.setValue(1);
                 Animated.timing(a.flash, { toValue: 0, duration: 240, useNativeDriver: true }).start();
@@ -386,7 +386,7 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
     const id = `p_${Math.random()}`;
     const anim = new Animated.Value(0);
     setProjectiles((prev) => [...prev, { id, from, to, element, anim }]);
-    Animated.timing(anim, { toValue: 1, duration: 230, useNativeDriver: false }).start(() => {
+    Animated.timing(anim, { toValue: 1, duration: 230, useNativeDriver: true }).start(() => {
       if (mounted.current) setProjectiles((prev) => prev.filter((p) => p.id !== id));
     });
   }
