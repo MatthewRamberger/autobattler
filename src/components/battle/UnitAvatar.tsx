@@ -22,42 +22,24 @@ interface Props {
   layout: HexLayout;
 }
 
+// Position is rendered directly from `unit.position` via hexCenter on every
+// React commit — when applyEvents patches a unit's position, the parent
+// setUnits triggers a re-render and this component renders at the new
+// (left, top). Movement is instant (no smooth tween) but visible. The
+// Animated.Values are only used for the small visual polish (scale,
+// opacity, flash, bob, shake, lunge) and all run on the native driver.
 function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
   const { hexW, hexH } = layout;
-  // The avatar wrapper is sized to a full hex cell so badges/HP bars align
-  // to its bounds rather than the sprite's pixel art.
   const cellW = hexW;
   const cellH = hexH;
 
-  // In hex mode the anims `x`/`y` are PIXEL CENTER coordinates of the unit
-  // in board space (not grid coords) — this lets us tween between cells
-  // along an arbitrary screen-space line without worrying about the
-  // odd-row half-cell offset.
-  //
-  // We position via TRANSFORM translate (not left/top) because:
-  //   1. transform animations are more reliable on web + native, and
-  //   2. they don't trigger React-style layout passes per frame.
-  // The wrap itself sits at the parent's (0, 0); the translate moves it
-  // so the unit's pixel center lands at (cx, cy).
-  const cx = anims?.x ?? new Animated.Value(hexCenter(unit.position, layout).cx);
-  const cy = anims?.y ?? new Animated.Value(hexCenter(unit.position, layout).cy);
-  const shake = anims?.shake ?? new Animated.Value(0);
-  const flash = anims?.flash ?? new Animated.Value(0);
-  const punch = anims?.punch ?? new Animated.Value(0);
-  const scale = anims?.scale ?? new Animated.Value(1);
-  const opacity = anims?.opacity ?? new Animated.Value(1);
-  const bob = anims?.bob ?? new Animated.Value(0);
-  const facing = anims?.facing ?? (unit.isPlayer ? 1 : -1);
+  const { cx, cy } = hexCenter(unit.position, layout);
+  const left = cx - cellW / 2;
+  const top = cy - cellH / 2;
 
-  // Pixel offset from cell center back to the wrap's top-left, plus the
-  // attack lunge + hit shake which are all JS-driven. The idle BOB and the
-  // scale/opacity animations live on the inner Animated.View because they
-  // run on the native driver — mixing drivers in the same transform is
-  // unsupported and the animation silently no-ops.
-  const lunge = punch.interpolate({ inputRange: [0, 1], outputRange: [0, facing * (cellW * 0.32)] });
-  const translateX = Animated.add(Animated.subtract(cx, cellW / 2), Animated.add(shake, lunge));
-  const translateY = Animated.subtract(cy, cellH / 2);
-  const bobY = bob.interpolate({ inputRange: [0, 1], outputRange: [0, -3] });
+  const facing = anims?.facing ?? (unit.isPlayer ? 1 : -1);
+  const lunge = anims ? anims.punch.interpolate({ inputRange: [0, 1], outputRange: [0, facing * (cellW * 0.32)] }) : 0;
+  const bobY = anims ? anims.bob.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }) : 0;
 
   const ring = unit.isPlayer ? palette.blue : palette.red;
   const ability = unit.abilityId ? ABILITIES[unit.abilityId] : null;
@@ -74,18 +56,28 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
   const spriteH = Math.min(cellW, cellH) * 0.92;
   const elementTint = unit.element && unit.element !== 'physical' ? ELEMENT_COLORS[unit.element] : undefined;
 
+  // Outer wrap: plain View at the unit's pixel position. No Animated.
   return (
-    <Animated.View
+    <View
       pointerEvents="none"
-      style={[
-        styles.wrap,
-        {
-          width: cellW, height: cellH, left: 0, top: 0,
-          transform: [{ translateX }, { translateY }],
-        },
-      ]}
+      style={[styles.wrap, { width: cellW, height: cellH, left, top }]}
     >
-      <Animated.View style={{ alignItems: 'center', transform: [{ translateY: bobY }, { scale }], opacity }}>
+      {/* Inner Animated.View: drives all the native-driver polish — attack
+          lunge (translateX from punch), idle bob (translateY from bob),
+          scale (spawn pop / death shrink), opacity (death fade), shake
+          (hit reaction via separate translateX). */}
+      <Animated.View
+        style={{
+          alignItems: 'center',
+          transform: [
+            { translateX: anims?.shake ?? 0 },
+            { translateX: lunge ?? 0 },
+            { translateY: bobY ?? 0 },
+            { scale: anims?.scale ?? 1 },
+          ],
+          opacity: anims?.opacity ?? 1,
+        }}
+      >
         {/* Hex-ish ground shadow under the sprite */}
         <View style={[styles.shadow, { width: spriteH * 0.85, height: spriteH * 0.16, bottom: -spriteH * 0.04 }]} />
 
@@ -117,13 +109,15 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
                 tint={elementTint}
                 tintOpacity={0.18}
               />
-              <Animated.View
-                pointerEvents="none"
-                style={[StyleSheet.absoluteFillObject, {
-                  backgroundColor: '#ff5a5a',
-                  opacity: flash.interpolate({ inputRange: [0, 1], outputRange: [0, 0.55] }),
-                }]}
-              />
+              {anims?.flash && (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[StyleSheet.absoluteFillObject, {
+                    backgroundColor: '#ff5a5a',
+                    opacity: anims.flash.interpolate({ inputRange: [0, 1], outputRange: [0, 0.55] }),
+                  }]}
+                />
+              )}
             </View>
 
             {ready && <View style={[styles.readyGlow, { width: spriteH + 8, height: spriteH + 8, borderRadius: (spriteH + 8) / 2 }]} />}
@@ -155,7 +149,7 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
           ))}
         </View>
       </Animated.View>
-    </Animated.View>
+    </View>
   );
 }
 

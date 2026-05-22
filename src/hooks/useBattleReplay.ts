@@ -14,12 +14,13 @@ export const GRID_ROWS = HEX_ROWS;
 const BASE_TICK_MS = 460;
 
 export interface UnitAnims {
-  // Pixel-center coordinates in board space. Hex offset makes a (col,row)→
-  // pixel mapping non-linear in row parity, so move tweens animate pixels
-  // directly. The owning component is responsible for passing the layout
-  // when it wants to map a fresh position back to pixels.
-  x: Animated.Value;
-  y: Animated.Value;
+  // Scale/opacity/flash/bob/shake/punch are still Animated.Values so we
+  // can drive the small visual polish (idle bob, attack lunge, hit shake,
+  // damage flash, death fade, spawn pop). Position is NOT animated here
+  // — `LiveUnit.position` in state is rendered directly, so unit moves
+  // are instant teleports between cells. Removing the position-animation
+  // layer was necessary because mixed JS/native Animated graphs in this
+  // RN + React combo were silently failing to propagate updates.
   flash: Animated.Value;        // 0..1 hit flash
   shake: Animated.Value;        // px shake
   punch: Animated.Value;        // 0..1 attack lunge
@@ -53,12 +54,12 @@ export type Phase = 'running' | 'paused' | 'done';
  * exposes plain render state plus a stable map of Animated handles. All
  * timers / animation frames are torn down on unmount and every state write is
  * guarded by a mounted flag, so finishing or leaving a battle can never set
- * state on an unmounted tree or leak an interval (the old finish-time crash).
+ * state on an unmounted tree or leak an interval.
  *
- * `layout` is the hex pixel layout of the rendered board — passed in by the
- * screen so move tweens can target real pixel centers. `grid` is the
- * abstract board (cols × rows × team zones) — passed to the engine so
- * bounds checks scale with siege maps.
+ * Timer design: a single self-rescheduling `setTimeout` driven by a
+ * `phase`/`battleSpeed` useEffect. When phase becomes 'paused' or 'done',
+ * the effect cleanup cancels the next callback. Resuming or rotating speed
+ * re-arms the loop.
  */
 export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
   const store = useGameStore();
@@ -84,8 +85,6 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
   const evIdx = useRef(0);
   const tickRef = useRef(0);
   const anims = useRef<Map<string, UnitAnims>>(new Map());
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const rafs = useRef<Set<number>>(new Set());
   const timeouts = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const finalUnits = useRef<BattleUnit[]>([]);
   const paused = useRef(false);
@@ -95,16 +94,8 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
     if (mounted.current) setter(value);
   }, []);
 
-  // Keep latest layout in a ref so the makeAnims/move closures always see
-  // the up-to-date pixel mapping if the screen resizes mid-battle.
-  const layoutRef = useRef(layout);
-  layoutRef.current = layout;
-
-  const makeAnims = useCallback((pos: GridPosition, facing: 1 | -1): UnitAnims => {
-    const c = hexCenter(pos, layoutRef.current);
+  const makeAnims = useCallback((facing: 1 | -1): UnitAnims => {
     const a: UnitAnims = {
-      x: new Animated.Value(c.cx),
-      y: new Animated.Value(c.cy),
       flash: new Animated.Value(0),
       shake: new Animated.Value(0),
       punch: new Animated.Value(0),
@@ -124,16 +115,49 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
 
   const getAnims = useCallback((id: string) => anims.current.get(id), []);
 
+  function scheduleTimeout(fn: () => void, ms: number) {
+    const id = setTimeout(() => {
+      timeouts.current.delete(id);
+      if (mounted.current) fn();
+    }, ms);
+    timeouts.current.add(id);
+    return id;
+  }
+
   // ---- one-time battle setup -------------------------------------------------
   useEffect(() => {
+    // Reset every ref to fresh-battle defaults. This matters in React Strict
+    // Mode's dev double-invocation: refs persist across the simulated
+    // unmount → remount, so without explicit resets here `done.current`
+    // from the first invocation would still be true on the second, and the
+    // replay loop would bail forever (no events processed, no log entries,
+    // no movement — exactly the bug pattern users were seeing).
     mounted.current = true;
+    done.current = false;
+    paused.current = false;
+    evIdx.current = 0;
+    tickRef.current = 0;
+    anims.current = new Map();
+    events.current = [];
+    logs.current = [];
+    finalUnits.current = [];
+    safeSet(setPhase, 'running');
+    safeSet(setTick, 0);
+    safeSet(setLog, []);
+    safeSet(setVfx, []);
+    safeSet(setProjectiles, []);
+    safeSet(setResult, null);
+
     try {
       const enemyCfg = level ? level.enemies : generateArenaWave(arenaWave);
       const enemyUnits = enemyCfg.map((e, idx) => buildEnemyUnit({
         name: e.name, heroClass: e.heroClass, level: e.level, position: e.position,
         icon: e.icon, index: idx, element: e.element, stars: e.stars, abilityId: e.abilityId,
       }));
-      const sanctumMana = (store.stronghold['sanctum'] ?? 0) * 8;
+      // Defensive: store.stronghold / store.settings may be missing from
+      // very old saves where these fields didn't yet exist.
+      const stronghold = (store.stronghold ?? {}) as Record<string, number>;
+      const sanctumMana = (stronghold['sanctum'] ?? 0) * 8;
       const playerUnits = Object.entries(placedHeroes).flatMap(([heroId, pos]) => {
         const hero = heroes[heroId];
         const stats = getHeroEffectiveStats(heroId, store);
@@ -166,77 +190,91 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       logs.current = computed.log;
       finalUnits.current = computed.finalUnits;
 
+      // Diagnostic header pushed directly into the displayed log so we can
+      // see from the screen alone whether setup actually produced a battle.
+      // If any of these counts are 0 we know something's wrong with setup
+      // even without a debugger attached.
+      safeSet(setLog, [{
+        tick: 0, type: 'system' as const,
+        text: `🎯 ${playerUnits.length}v${enemyUnits.length} · ${computed.events.length} events queued`,
+      }]);
+
       const all = [...playerUnits, ...enemyUnits];
       const map = new Map<string, UnitAnims>();
-      for (const u of all) map.set(u.id, makeAnims(u.position, u.isPlayer ? 1 : -1));
+      for (const u of all) map.set(u.id, makeAnims(u.isPlayer ? 1 : -1));
       anims.current = map;
       setUnits(all.map((u) => ({ ...u, position: { ...u.position } })));
-      startTimer();
     } catch (err) {
-      // Never let setup throw into render — show an immediate (empty) finish.
+      // Surface the failure: console + a visible combat-log entry so
+      // we can actually see what blew up on device (console.warn is
+      // invisible without a debugger).
       // eslint-disable-next-line no-console
       console.warn('[battle] setup failed', err);
+      const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      safeSet(setLog, [{ tick: 0, type: 'system' as const, text: `⚠ Battle setup failed — ${msg}` }]);
       finish();
     }
     return () => {
       mounted.current = false;
-      if (timer.current) clearInterval(timer.current);
-      rafs.current.forEach((r) => cancelAnimationFrame(r));
       timeouts.current.forEach((t) => clearTimeout(t));
-      rafs.current.clear();
       timeouts.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function startTimer() {
-    if (timer.current) clearInterval(timer.current);
-    timer.current = setInterval(step, BASE_TICK_MS / store.battleSpeed);
-  }
-
-  // restart cadence on speed change while running
+  // ---- replay loop -----------------------------------------------------------
+  // A self-rescheduling timeout: each tick processes one batch of events,
+  // then schedules the next. Cleanup cancels the next callback on phase /
+  // battle-speed change or unmount.
   useEffect(() => {
-    if (phase === 'running' && !done.current) startTimer();
+    if (phase !== 'running') return;
+    let cancelled = false;
+    let tid: ReturnType<typeof setTimeout> | null = null;
+
+    const runOne = () => {
+      if (cancelled || !mounted.current || done.current) return;
+      if (paused.current) {
+        // Loop will get cancelled when phase flips to 'paused' (cleanup),
+        // but as a safety check we don't process while paused.
+        tid = setTimeout(runOne, 100);
+        return;
+      }
+      const evs = events.current;
+      if (evIdx.current >= evs.length) {
+        finish();
+        return;
+      }
+      const t = evs[evIdx.current]?.tick ?? tickRef.current;
+      tickRef.current = t;
+      safeSet(setTick, t);
+      const batch: BattleEvent[] = [];
+      while (evIdx.current < evs.length && evs[evIdx.current].tick === t) {
+        batch.push(evs[evIdx.current]);
+        evIdx.current++;
+      }
+      applyEvents(batch);
+      const newLogs = logs.current.filter((e) => e.tick === t);
+      if (newLogs.length) setLog((prev) => [...prev, ...newLogs]);
+      tid = setTimeout(runOne, BASE_TICK_MS / Math.max(1, store.battleSpeed));
+    };
+
+    // Wait one frame so the setup effect's setUnits has a chance to commit
+    // before we start firing event batches that reference those units.
+    tid = setTimeout(runOne, 16);
+
+    return () => {
+      cancelled = true;
+      if (tid) clearTimeout(tid);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [battleSpeed]);
-
-  function scheduleRaf(fn: () => void) {
-    const id = requestAnimationFrame(() => {
-      rafs.current.delete(id);
-      if (mounted.current) fn();
-    });
-    rafs.current.add(id);
-  }
-  function scheduleTimeout(fn: () => void, ms: number) {
-    const id = setTimeout(() => {
-      timeouts.current.delete(id);
-      if (mounted.current) fn();
-    }, ms);
-    timeouts.current.add(id);
-  }
-
-  function step() {
-    if (paused.current || done.current || !mounted.current) return;
-    const evs = events.current;
-    if (evIdx.current >= evs.length) { finish(); return; }
-    const t = evs[evIdx.current]?.tick ?? tickRef.current;
-    tickRef.current = t;
-    safeSet(setTick, t);
-    const batch: BattleEvent[] = [];
-    while (evIdx.current < evs.length && evs[evIdx.current].tick === t) {
-      batch.push(evs[evIdx.current]);
-      evIdx.current++;
-    }
-    applyEvents(batch);
-    const newLogs = logs.current.filter((e) => e.tick === t);
-    if (newLogs.length) setLog((prev) => [...prev, ...newLogs]);
-  }
+  }, [phase, battleSpeed]);
 
   // Pure data reduce; animation side-effects queued and flushed after commit.
   function applyEvents(batch: BattleEvent[]) {
     const map = anims.current;
-    const particles = store.settings.particles;
-    const reduce = store.settings.reduceMotion;
+    // Defensive: settings may be missing from old saves.
+    const particles = store.settings?.particles ?? true;
+    const reduce = store.settings?.reduceMotion ?? false;
     const fx: Array<() => void> = [];
     const float = (id: string, text: string, color: string, fontSize?: number, crit?: boolean) => {
       if (!particles) return;
@@ -254,14 +292,6 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
             if (ev.toPosition && ev.sourceId) {
               const to = ev.toPosition;
               patch(ev.sourceId, (u) => ({ ...u, position: to }));
-              const a = map.get(ev.sourceId);
-              if (a) {
-                const target = hexCenter(to, layoutRef.current);
-                fx.push(() => Animated.parallel([
-                  Animated.timing(a.x, { toValue: target.cx, duration: 230, useNativeDriver: true }),
-                  Animated.timing(a.y, { toValue: target.cy, duration: 230, useNativeDriver: true }),
-                ]).start());
-              }
             }
             break;
           case 'attack':
@@ -360,7 +390,7 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
           case 'spawn':
             if (ev.unit && ev.unit.position && !next.some((p) => p.id === ev.unit!.id)) {
               const su = ev.unit;
-              if (!map.has(su.id)) map.set(su.id, makeAnims(su.position, su.isPlayer ? 1 : -1));
+              if (!map.has(su.id)) map.set(su.id, makeAnims(su.isPlayer ? 1 : -1));
               const a = map.get(su.id)!;
               a.scale.setValue(0);
               fx.push(() => Animated.spring(a.scale, { toValue: 1, useNativeDriver: true, friction: 5 }).start());
@@ -372,7 +402,11 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       return next;
     });
 
-    if (fx.length) scheduleRaf(() => { for (const fn of fx) fn(); });
+    if (fx.length) {
+      // Run side-effects on the next frame so React commits the state
+      // update first; otherwise Animated.timing reads stale state.
+      requestAnimationFrame(() => { for (const fn of fx) fn(); });
+    }
   }
 
   function spawnFloat(unitId: string, text: string, color: string, fontSize?: number, crit?: boolean) {
@@ -394,7 +428,6 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
   function finish() {
     if (done.current) return;
     done.current = true;
-    if (timer.current) { clearInterval(timer.current); timer.current = null; }
     safeSet(setPhase, 'done');
 
     try {
@@ -427,7 +460,6 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       }
       safeSet(setResult, summary);
     } catch (err) {
-      // A failure applying rewards must never crash the app — still show a card.
       // eslint-disable-next-line no-console
       console.warn('[battle] finish/rewards failed', err);
       safeSet(setResult, { won: false, gold: 0, exp: 0, damageDealt: 0, healingDone: 0, killCount: 0 });
