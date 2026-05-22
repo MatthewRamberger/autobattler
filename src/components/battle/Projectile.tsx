@@ -6,11 +6,11 @@ import { ELEMENT_COLORS } from '../../data/heroes';
 import { Projectile as Proj } from '../../hooks/useBattleReplay';
 import { HexLayout, hexCenter } from '../../utils/hex';
 
-// Per-element styled trail color. Drawn as a gradient ball + trail so
-// projectiles read on the redesigned painted field. Position uses
-// transform translates so the native driver carries the motion.
+// Per-element styled projectile: a glowing core + a motion-blur streak that
+// points along the travel direction, drawn with gradient Views so it stays
+// crisp under the BattleStage pinch-zoom.
 const TRAIL: Record<Element, readonly [string, string]> = {
-  physical: ['#fff7c2', '#888'] as const,
+  physical: ['#fff7c2', '#9a9a9a'] as const,
   fire: ['#ffe066', '#cf3623'] as const,
   ice: ['#e0f4ff', '#3da4ff'] as const,
   lightning: ['#fff2a8', '#f1c40f'] as const,
@@ -25,18 +25,17 @@ export default function Projectile({ proj, layout }: Props) {
   const from = hexCenter(proj.from, layout);
   const to = hexCenter(proj.to, layout);
   const { hexW, hexH } = layout;
-  const size = Math.min(hexW, hexH) * 0.36;
+  const size = Math.min(hexW, hexH) * 0.4;
   const colors = TRAIL[proj.element] ?? TRAIL.physical;
   const glow = ELEMENT_COLORS[proj.element];
+  const angleDeg = (Math.atan2(to.cy - from.cy, to.cx - from.cx) * 180) / Math.PI;
+  const streakLen = size * 3.4;
 
-  const translateX = proj.anim.interpolate({
-    inputRange: [0, 1], outputRange: [0, to.cx - from.cx],
-  });
-  const translateY = proj.anim.interpolate({
-    inputRange: [0, 1], outputRange: [0, to.cy - from.cy],
-  });
-  const lift = proj.anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -hexH * 0.35, 0] });
-  const fade = proj.anim.interpolate({ inputRange: [0, 0.1, 0.9, 1], outputRange: [0, 1, 1, 0.4] });
+  const translateX = proj.anim.interpolate({ inputRange: [0, 1], outputRange: [0, to.cx - from.cx] });
+  const translateY = proj.anim.interpolate({ inputRange: [0, 1], outputRange: [0, to.cy - from.cy] });
+  const lift = proj.anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -hexH * 0.32, 0] });
+  const fade = proj.anim.interpolate({ inputRange: [0, 0.12, 0.85, 1], outputRange: [0, 1, 1, 0] });
+  const spin = proj.anim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '540deg'] });
 
   return (
     <Animated.View
@@ -51,20 +50,39 @@ export default function Projectile({ proj, layout }: Props) {
         opacity: fade,
       }}
     >
-      <LinearGradient
-        colors={colors as any}
-        start={{ x: 0.2, y: 0.2 }} end={{ x: 0.8, y: 0.8 }}
+      {/* Motion-blur streak trailing behind the head */}
+      <View
         style={{
-          width: size, height: size, borderRadius: size / 2,
-          shadowColor: glow, shadowOpacity: 1, shadowRadius: 7, shadowOffset: { width: 0, height: 0 },
-          elevation: 6,
+          position: 'absolute',
+          width: streakLen, height: size * 0.62,
+          transform: [{ rotate: `${angleDeg}deg` }, { translateX: -streakLen / 2 }],
         }}
-      />
+      >
+        <LinearGradient
+          colors={['transparent', colors[1] + '00', colors[0] + 'cc'] as const}
+          start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }}
+          style={{ flex: 1, borderRadius: size }}
+        />
+      </View>
+
+      {/* Glowing head */}
+      <Animated.View style={{ transform: [{ rotate: spin }] }}>
+        <LinearGradient
+          colors={colors as any}
+          start={{ x: 0.2, y: 0.2 }} end={{ x: 0.8, y: 0.8 }}
+          style={{
+            width: size, height: size, borderRadius: size / 2,
+            shadowColor: glow, shadowOpacity: 1, shadowRadius: 9, shadowOffset: { width: 0, height: 0 },
+            elevation: 7,
+          }}
+        />
+      </Animated.View>
+      {/* White-hot core */}
       <View
         pointerEvents="none"
         style={{
-          position: 'absolute', width: size * 0.4, height: size * 0.4, borderRadius: size * 0.2,
-          backgroundColor: '#ffffffcc',
+          position: 'absolute', width: size * 0.42, height: size * 0.42,
+          borderRadius: size * 0.21, backgroundColor: '#ffffff',
         }}
       />
     </Animated.View>

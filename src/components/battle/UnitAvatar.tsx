@@ -90,7 +90,7 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
   // Sprite is now a layered illustrated avatar: gradient disc, rim ring,
   // emoji icon centered. Size proportional to the hex cell so the unit
   // sits comfortably.
-  const portraitSize = Math.min(cellW, cellH) * 0.78;
+  const portraitSize = Math.min(cellW, cellH) * 0.86;
   const elementTint = unit.element && unit.element !== 'physical' ? ELEMENT_COLORS[unit.element] : undefined;
   const classStyle = CLASS_STYLES[unit.heroClass] ?? CLASS_STYLES.Warrior;
 
@@ -203,6 +203,19 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
                 backgroundColor: classStyle.rim[0],
                 opacity: 0.22,
               }} pointerEvents="none" />
+              {/* Ambient occlusion — bottom inner shadow gives the disc roundness */}
+              <LinearGradient
+                pointerEvents="none"
+                colors={['transparent', '#00000099'] as const}
+                start={{ x: 0.5, y: 0.42 }} end={{ x: 0.5, y: 1 }}
+                style={{ ...StyleSheet.absoluteFillObject, borderRadius: portraitSize / 2 }}
+              />
+              {/* Glossy crown highlight */}
+              <View pointerEvents="none" style={{
+                position: 'absolute', top: portraitSize * 0.07, alignSelf: 'center',
+                width: portraitSize * 0.5, height: portraitSize * 0.19,
+                borderRadius: 999, backgroundColor: '#ffffff', opacity: 0.34,
+              }} />
 
               {/* Big hero icon — emoji rendered crisp at portrait scale */}
               <View
@@ -247,6 +260,21 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
                 />
               )}
             </View>
+
+            {/* Impact ring — a shockwave that expands & fades on every hit */}
+            {anims?.flash && (
+              <Animated.View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  width: portraitSize * 1.4, height: portraitSize * 1.4,
+                  borderRadius: portraitSize * 0.7,
+                  borderWidth: 3, borderColor: '#ffffff',
+                  opacity: anims.flash.interpolate({ inputRange: [0, 1], outputRange: [0, 0.8] }),
+                  transform: [{ scale: anims.flash.interpolate({ inputRange: [0, 1], outputRange: [1.5, 0.75] }) }],
+                }}
+              />
+            )}
 
             {/* Stars indicator — small dots above */}
             {unit.stars > 0 && (

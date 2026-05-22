@@ -86,6 +86,9 @@ export interface Hero {
   heroClass: HeroClass;
   level: number;
   stars: number;            // ascension level, 0..5
+  // Card rank, 0..5. Raised by combining duplicate hero cards. Each rank
+  // grants a flat permanent multiplier to the hero's core stats.
+  rank?: number;
   experience: number;
   experienceToNext: number;
   baseStats: Omit<HeroStats, 'hp'>;  // maxHp is in baseStats
@@ -366,8 +369,15 @@ export interface GameState {
   gold: number;
   gems: number;
   heroes: Record<string, Hero>;
+  // Hero cards owned per hero id. Cards are earned from chests, summons and
+  // battles. Each card is a deployable copy AND fuel for rank-up combining.
+  heroCards: Record<string, number>;
   equipment: Record<string, Equipment>;
   levelProgress: Record<number, LevelProgressEntry>;
+  // Battlefield placements. The KEY is a placement-instance id, not a hero
+  // id: the first copy of a hero uses the bare hero id, extra copies use
+  // `${heroId}#2`, `${heroId}#3`, … so the same hero can be deployed
+  // multiple times. Use `heroIdOfPlacement` to recover the hero id.
   placedHeroes: Record<string, GridPosition>;
   currentLevelId: number | null;
   selectedHeroId: string | null;

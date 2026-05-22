@@ -12,6 +12,7 @@ import { BattleLogEntry } from '../types';
 import Arena from '../components/battle/Arena';
 import UnitAvatar from '../components/battle/UnitAvatar';
 import Projectile from '../components/battle/Projectile';
+import BattleStage from '../components/battle/BattleStage';
 import { ScreenBackground, GButton, Panel, Plate, palette, gradients } from '../components/ui';
 
 const FRAME_PAD = 8;
@@ -84,9 +85,11 @@ export default function BattleScreen() {
     );
   };
 
-  // Decide whether the arena needs to horizontal-scroll. Siege boards are
-  // always wider than the screen budget, normal boards never are.
-  const needsScroll = layout.totalW > fieldWBudget + 2;
+  // Pinch-zoom / drag-pan viewport size for the battlefield.
+  const stageW = screenW - 12;
+  const stageH = grid.size === 'siege'
+    ? Math.min(screenH * 0.44, 332)
+    : Math.min(fieldH + FRAME_PAD * 2 + 6, 270);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'right', 'left', 'bottom']}>
@@ -121,21 +124,16 @@ export default function BattleScreen() {
         <CrownCount tint={palette.red} label="ENEMY" alive={aliveE} total={enemies.length} right />
       </View>
 
-      {/* Arena */}
+      {/* Arena — pinch to zoom, drag to pan */}
       <View style={styles.arenaArea}>
-        {needsScroll ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator
-            contentContainerStyle={{ paddingHorizontal: 8 }}
-            // Center the initial scroll on the action.
-            contentOffset={{ x: Math.max(0, (fieldW - fieldWBudget) / 2), y: 0 }}
-          >
-            <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} theme={levelReplay?.theme} obstacles={levelReplay?.obstacles} />
-          </ScrollView>
-        ) : (
+        <BattleStage
+          contentWidth={fieldW + FRAME_PAD * 2}
+          contentHeight={fieldH + FRAME_PAD * 2}
+          viewportWidth={stageW}
+          viewportHeight={stageH}
+        >
           <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} theme={levelReplay?.theme} obstacles={levelReplay?.obstacles} />
-        )}
+        </BattleStage>
       </View>
 
       {/* Controls */}

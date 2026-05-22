@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
-import { useGameStore, getHeroEffectiveStats } from '../store/gameStore';
+import {
+  useGameStore, getHeroEffectiveStats, cardsForRank, deployableCopies,
+  MAX_HERO_RANK, RANK_BOOST,
+} from '../store/gameStore';
 import { CLASS_COLORS } from '../data/heroes';
 import { ABILITIES } from '../data/abilities';
 import { TALENTS, TALENT_UNLOCK_LEVELS, availableTalentTier } from '../data/talents';
@@ -15,7 +18,7 @@ const UNLOCK_COSTS: Record<string, number> = { common: 100, rare: 250, epic: 500
 
 export default function CollectionScreen() {
   const store = useGameStore();
-  const { heroes, gold, gems, setScreen, unlockHero, levelUpHero, ascendHero, unequipItem, equipItem, toggleFavorite, autoEquipBest, pickTalent, respecTalents } = store;
+  const { heroes, heroCards, gold, gems, setScreen, unlockHero, levelUpHero, ascendHero, combineHeroCards, unequipItem, equipItem, toggleFavorite, autoEquipBest, pickTalent, respecTalents } = store;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [equipTab, setEquipTab] = useState<'weapon' | 'armor' | 'accessory'>('weapon');
   const [filter, setFilter] = useState<'all' | 'unlocked' | 'favorite'>('all');
@@ -126,6 +129,48 @@ export default function CollectionScreen() {
                     disabled={hero.stars >= 5}
                     onPress={() => { if (gems < (hero.stars + 1) * 30) { Alert.alert('Not enough gems!'); return; } ascendHero(hero.id); }} />
                 </View>
+
+                {(() => {
+                  const cards = heroCards[hero.id] ?? 0;
+                  const rank = hero.rank ?? 0;
+                  const need = cardsForRank(rank);
+                  const maxed = rank >= MAX_HERO_RANK;
+                  const canCombine = !maxed && cards >= need + 1;
+                  const copies = deployableCopies(hero.unlocked, cards);
+                  return (
+                    <Panel glow={palette.blue} style={{ marginTop: spacing.md }}>
+                      <SectionTitle>HERO CARDS · RANK {rank}/{MAX_HERO_RANK}</SectionTitle>
+                      <View style={styles.cardRow}>
+                        <View style={styles.cardStack}>
+                          <Text style={styles.cardStackIcon}>🃏</Text>
+                          <Text style={styles.cardStackNum}>{cards}</Text>
+                          <Text style={styles.cardStackLbl}>CARDS</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View style={styles.rankPips}>
+                            {Array.from({ length: MAX_HERO_RANK }).map((_, i) => (
+                              <View key={i} style={[styles.rankPip, i < rank && styles.rankPipOn]} />
+                            ))}
+                          </View>
+                          <Text style={styles.cardHint}>
+                            {maxed
+                              ? 'Maximum rank reached.'
+                              : `Combine ${need} cards to reach Rank ${rank + 1} — +${Math.round(RANK_BOOST * 100)}% HP / ATK / DEF.`}
+                          </Text>
+                          <Text style={styles.cardHint2}>
+                            🛡 Deploy up to {copies} cop{copies === 1 ? 'y' : 'ies'} of this hero per battle.
+                          </Text>
+                        </View>
+                      </View>
+                      {!maxed && (
+                        <GButton wide variant="blue"
+                          label={canCombine ? `🃏 COMBINE → RANK ${rank + 1}` : `Need ${need + 1} cards to combine`}
+                          disabled={!canCombine}
+                          onPress={() => combineHeroCards(hero.id)} />
+                      )}
+                    </Panel>
+                  );
+                })()}
 
                 <Panel style={{ marginTop: spacing.md }}>
                   <SectionTitle>MILESTONES · ⚔{hero.kills ?? 0} · 🛡{hero.battlesUsed ?? 0}</SectionTitle>
@@ -276,6 +321,19 @@ const styles = StyleSheet.create({
   abilityDesc: { color: palette.textSoft, fontSize: 11, marginTop: 6, lineHeight: 15 },
   passive: { color: '#f9e79f', fontSize: 10, marginTop: 6, fontStyle: 'italic' },
   actionRow: { flexDirection: 'row', gap: 8 },
+  cardRow: { flexDirection: 'row', gap: 12, alignItems: 'center', marginBottom: 10 },
+  cardStack: {
+    width: 64, height: 64, borderRadius: 12, backgroundColor: palette.panelDeep,
+    borderWidth: 2, borderColor: palette.blueDeep, alignItems: 'center', justifyContent: 'center',
+  },
+  cardStackIcon: { fontSize: 20 },
+  cardStackNum: { color: palette.text, fontSize: 18, fontWeight: '900', marginTop: -2 },
+  cardStackLbl: { color: palette.textMute, fontSize: 7, fontWeight: '800', letterSpacing: 1 },
+  rankPips: { flexDirection: 'row', gap: 5, marginBottom: 6 },
+  rankPip: { flex: 1, height: 8, borderRadius: 4, backgroundColor: palette.panelDeep, borderWidth: 1, borderColor: '#0007' },
+  rankPipOn: { backgroundColor: palette.gold, borderColor: palette.goldDeep },
+  cardHint: { color: palette.textSoft, fontSize: 10, lineHeight: 14, fontWeight: '600' },
+  cardHint2: { color: palette.blue, fontSize: 10, fontWeight: '700', marginTop: 3 },
   sectRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   mRow: { flexDirection: 'row', gap: 4, marginVertical: 3 },
   mItem: { flex: 1, backgroundColor: palette.panelDeep, borderRadius: 6, padding: 4, alignItems: 'center', borderWidth: 1, borderColor: '#0006' },

@@ -19,6 +19,9 @@ import {
   HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL,
   SMALL_GRID, SIEGE_GRID, gridForLevel,
 } from '../utils/hex';
+import {
+  heroIdOfPlacement, nextPlacementKey, countPlacementsOf,
+} from '../utils/placement';
 import { LEVELS } from '../data/levels';
 
 // Read the live placement cap from the current battle context. Falls back
@@ -35,6 +38,22 @@ const SAVE_KEY = '@autobattler/save_v2';
 // uncapped formula) get rebased on hydrate — see `rebaseHero` below.
 export const MAX_HERO_LEVEL = 50;
 export const MAX_HERO_STARS = 5;
+export const MAX_HERO_RANK = 5;
+
+// Card economy. A hero is leveled up by collecting duplicate cards and
+// combining them. `cardsForRank` is how many cards a rank-up consumes;
+// combining always leaves at least one card so the hero stays deployable.
+// `RANK_BOOST` is the per-rank flat stat multiplier applied in
+// getHeroEffectiveStats.
+export const RANK_BOOST = 0.12;
+export function cardsForRank(rank: number): number {
+  return rank + 2; // 0→1: 2, 1→2: 3, … 4→5: 6
+}
+// Total deployable copies of a hero on one battlefield.
+export function deployableCopies(unlocked: boolean, cards: number): number {
+  if (!unlocked) return 0;
+  return Math.max(1, cards);
+}
 // Per-level stat multiplier — used by both XP and gold-spent levelups.
 const LEVEL_BOOST = 1.05;
 // Per-star ascension boost.
@@ -70,6 +89,14 @@ function rebaseBaseStats(
   };
 }
 
+// A single mystery-chest payout: gear, hero cards and currency.
+export interface ChestReward {
+  items: { id: string; qty: number }[];
+  heroCards: { heroId: string; qty: number }[];
+  gold: number;
+  gems: number;
+}
+
 interface GameStore extends GameState {
   currentScreen: string;
   setScreen: (screen: string) => void;
@@ -81,9 +108,17 @@ interface GameStore extends GameState {
   equipItem: (heroId: string, equipmentId: string) => void;
   unequipItem: (heroId: string, slot: 'weapon' | 'armor' | 'accessory') => void;
 
+  // Hero card system.
+  grantHeroCards: (heroId: string, qty: number) => void;
+  combineHeroCards: (heroId: string) => void;
+
   setCurrentLevel: (levelId: number | null) => void;
-  placeHero: (heroId: string, pos: GridPosition) => void;
-  removeHeroFromGrid: (heroId: string) => void;
+  // Place a fresh copy of `heroId`; returns the placement-instance key, or
+  // null if no copy is available / the board is full.
+  placeHero: (heroId: string, pos: GridPosition) => string | null;
+  // Move an already-placed instance to a new cell.
+  movePlacement: (key: string, pos: GridPosition) => void;
+  removeHeroFromGrid: (key: string) => void;
   clearPlacements: () => void;
   autoPlace: () => void;
 
@@ -141,11 +176,11 @@ interface GameStore extends GameState {
   // Quick fight: re-use last loadout for the given level.
   quickFight: (levelId: number) => void;
 
-  // Hero summoning gacha.
-  summonHero: () => Promise<{ heroId?: string; reward?: { kind: 'gems' | 'gold' | 'shards'; value: number } }>;
+  // Hero summoning gacha — yields a hero card (and unlocks new heroes).
+  summonHero: () => Promise<{ heroId: string; isNew: boolean; cardCount: number } | null>;
 
   // Mystery chest: roll a weighted reward.
-  openMysteryChest: (rarity: 'wooden' | 'silver' | 'gold' | 'mythic') => Promise<{ items: { id: string; qty: number }[]; gold: number; gems: number }>;
+  openMysteryChest: (rarity: 'wooden' | 'silver' | 'gold' | 'mythic') => Promise<ChestReward>;
 
   setBattleSpeed: (s: 1 | 2 | 4) => void;
   hydrate: () => Promise<void>;
@@ -153,7 +188,12 @@ interface GameStore extends GameState {
 }
 
 function buildInitialHeroes(): Record<string, Hero> {
-  return Object.fromEntries(HEROES.map((h) => [h.id, { ...h, baseStats: { ...h.baseStats, resistance: { ...h.baseStats.resistance } } }]));
+  return Object.fromEntries(HEROES.map((h) => [h.id, { ...h, rank: 0, baseStats: { ...h.baseStats, resistance: { ...h.baseStats.resistance } } }]));
+}
+
+// Each hero that starts unlocked owns a single card.
+function buildInitialHeroCards(): Record<string, number> {
+  return Object.fromEntries(HEROES.filter((h) => h.unlocked).map((h) => [h.id, 1]));
 }
 
 function buildInitialEquipment(): Record<string, Equipment> {
@@ -168,6 +208,7 @@ const INITIAL_STATE: GameState = {
   gold: 250,
   gems: 0,
   heroes: buildInitialHeroes(),
+  heroCards: buildInitialHeroCards(),
   equipment: buildInitialEquipment(),
   levelProgress: {},
   placedHeroes: {},
@@ -349,22 +390,71 @@ export const useGameStore = create<GameStore>((set, get) => ({
     persist(get());
   },
 
+  grantHeroCards: (heroId, qty) => {
+    if (qty <= 0) return;
+    const state = get();
+    const hero = state.heroes[heroId];
+    if (!hero) return;
+    const heroCards = { ...state.heroCards, [heroId]: (state.heroCards[heroId] ?? 0) + qty };
+    // Earning a card for a locked hero unlocks them.
+    const heroes = hero.unlocked
+      ? state.heroes
+      : { ...state.heroes, [heroId]: { ...hero, unlocked: true } };
+    set({ heroCards, heroes });
+    persist(get());
+  },
+
+  combineHeroCards: (heroId) => {
+    const state = get();
+    const hero = state.heroes[heroId];
+    if (!hero) return;
+    const rank = hero.rank ?? 0;
+    if (rank >= MAX_HERO_RANK) return;
+    const need = cardsForRank(rank);
+    const have = state.heroCards[heroId] ?? 0;
+    // Combining always leaves one card behind so the hero stays deployable.
+    if (have < need + 1) return;
+    set({
+      heroCards: { ...state.heroCards, [heroId]: have - need },
+      heroes: { ...state.heroes, [heroId]: { ...hero, rank: rank + 1 } },
+    });
+    persist(get());
+  },
+
   setCurrentLevel: (levelId) => set({ currentLevelId: levelId, placedHeroes: {} }),
 
   placeHero: (heroId, pos) => {
     const state = get();
-    const { placedHeroes } = state;
-    const cap = currentMaxHeroes(state);
-    if (Object.keys(placedHeroes).length >= cap && !placedHeroes[heroId]) return;
-    const cleaned = Object.fromEntries(Object.entries(placedHeroes).filter(([id]) => id !== heroId));
-    const deduped = Object.fromEntries(Object.entries(cleaned).filter(([, p]) => !(p.col === pos.col && p.row === pos.row)));
-    set({ placedHeroes: { ...deduped, [heroId]: pos } });
+    const { placedHeroes, heroes, heroCards } = state;
+    const hero = heroes[heroId];
+    if (!hero || !hero.unlocked) return null;
+    const keys = Object.keys(placedHeroes);
+    if (keys.length >= currentMaxHeroes(state)) return null;
+    const maxCopies = deployableCopies(true, heroCards[heroId] ?? 0);
+    if (countPlacementsOf(heroId, keys) >= maxCopies) return null;
+    const key = nextPlacementKey(heroId, keys, maxCopies);
+    if (!key) return null;
+    // Vacate the target cell if another instance is standing on it.
+    const cleared = Object.fromEntries(
+      Object.entries(placedHeroes).filter(([, p]) => !(p.col === pos.col && p.row === pos.row))
+    );
+    set({ placedHeroes: { ...cleared, [key]: pos } });
+    return key;
   },
 
-  removeHeroFromGrid: (heroId) => {
+  movePlacement: (key, pos) => {
+    const { placedHeroes } = get();
+    if (!placedHeroes[key]) return;
+    const cleared = Object.fromEntries(
+      Object.entries(placedHeroes).filter(([k, p]) => k === key || !(p.col === pos.col && p.row === pos.row))
+    );
+    set({ placedHeroes: { ...cleared, [key]: pos } });
+  },
+
+  removeHeroFromGrid: (key) => {
     const { placedHeroes } = get();
     const updated = { ...placedHeroes };
-    delete updated[heroId];
+    delete updated[key];
     set({ placedHeroes: updated });
   },
 
@@ -500,6 +590,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     }
 
+    // Hero card drop — winning often yields a card for a random owned hero,
+    // feeding the rank-up / multi-deploy economy.
+    let updatedHeroCards = state.heroCards;
+    if (won && Math.random() < 0.55) {
+      const ownedIds = Object.values(updatedHeroes).filter((h) => h.unlocked).map((h) => h.id);
+      if (ownedIds.length > 0) {
+        const pick = ownedIds[Math.floor(Math.random() * ownedIds.length)];
+        updatedHeroCards = { ...state.heroCards, [pick]: (state.heroCards[pick] ?? 0) + 1 };
+      }
+    }
+
     const updatedProgress = { ...state.levelProgress };
     if (won && state.currentLevelId !== null) {
       const prev = updatedProgress[state.currentLevelId];
@@ -543,6 +644,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       gold: state.gold + finalGold,
       gems: state.gems + (won ? 2 : 0),
       heroes: updatedHeroes,
+      heroCards: updatedHeroCards,
       equipment: updatedEquipment,
       levelProgress: updatedProgress,
       achievements: ach,
@@ -557,7 +659,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   forfeitBattle: () => {
     const state = get();
-    const heroIds = Object.keys(state.placedHeroes);
+    const heroIds = new Set(Object.keys(state.placedHeroes).map(heroIdOfPlacement));
     const updatedHeroes = { ...state.heroes };
     for (const heroId of heroIds) {
       const hero = updatedHeroes[heroId];
@@ -585,11 +687,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   unlockHero: (heroId, cost) => {
-    const { heroes, gold } = get();
+    const { heroes, heroCards, gold } = get();
     if (gold < cost || !heroes[heroId]) return;
     set({
       gold: gold - cost,
       heroes: { ...heroes, [heroId]: { ...heroes[heroId], unlocked: true } },
+      // Unlocking grants the hero's first card.
+      heroCards: { ...heroCards, [heroId]: Math.max(1, heroCards[heroId] ?? 0) },
     });
     persist(get());
   },
@@ -761,9 +865,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const state = get();
     let wins = 0, losses = 0, goldGained = 0, expGained = 0;
     for (let i = 0; i < times; i++) {
-      const placedIds = Object.keys(state.placedHeroes);
-      if (placedIds.length === 0) break;
-      const playerUnits = placedIds.map((heroId) => {
+      const placedKeys = Object.keys(state.placedHeroes);
+      if (placedKeys.length === 0) break;
+      const playerUnits = placedKeys.map((key) => {
+        const heroId = heroIdOfPlacement(key);
         const hero = state.heroes[heroId];
         const stats = getHeroEffectiveStats(heroId, get())!;
         return buildPlayerUnit({
@@ -773,7 +878,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           critRate: stats.critRate, critDamage: stats.critDamage, dodge: stats.dodge,
           maxMana: stats.maxMana, manaRegen: stats.manaRegen,
           element: stats.element, resistance: stats.resistance,
-          position: state.placedHeroes[heroId], icon: hero.icon, portraitSeed: hero.portraitSeed,
+          position: state.placedHeroes[key], icon: hero.icon, portraitSeed: hero.portraitSeed,
           stars: hero.stars, abilityId: hero.abilityId,
         });
       });
@@ -790,8 +895,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const exp = won ? level.rewards.experience : Math.floor(level.rewards.experience * 0.1);
       const drops = level.rewards.possibleDrops;
       const drop = won && Math.random() < 0.45 ? drops[Math.floor(Math.random() * drops.length)] : undefined;
-      // Apply rewards via the existing path.
-      get().applyBattleRewards(won, gold, exp, placedIds, { damage: totalDmg, kills: totalKills }, drop);
+      // Apply rewards via the existing path (deduped to real hero ids).
+      const rewardIds = [...new Set(placedKeys.map(heroIdOfPlacement))];
+      get().applyBattleRewards(won, gold, exp, rewardIds, { damage: totalDmg, kills: totalKills }, drop);
       if (won) { wins++; goldGained += gold; expGained += exp; }
       else losses++;
     }
@@ -814,10 +920,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const state = get();
     const lo = state.loadouts[slotId];
     if (!lo) return;
-    // Only place heroes the player has unlocked.
+    // Only place heroes the player still owns.
     const placements: Record<string, GridPosition> = {};
-    for (const [hid, pos] of Object.entries(lo.placements)) {
-      if (state.heroes[hid]?.unlocked) placements[hid] = pos;
+    for (const [key, pos] of Object.entries(lo.placements)) {
+      if (state.heroes[heroIdOfPlacement(key)]?.unlocked) placements[key] = pos;
     }
     set({ placedHeroes: placements });
   },
@@ -842,7 +948,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let wins = 0;
     let ticks = 0;
     for (let i = 0; i < samples; i++) {
-      const playerUnits = placedIds.map((heroId) => {
+      const playerUnits = placedIds.map((key) => {
+        const heroId = heroIdOfPlacement(key);
         const hero = state.heroes[heroId];
         const stats = getHeroEffectiveStats(heroId, state)!;
         return buildPlayerUnit({
@@ -852,7 +959,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           critRate: stats.critRate, critDamage: stats.critDamage, dodge: stats.dodge,
           maxMana: stats.maxMana, manaRegen: stats.manaRegen,
           element: stats.element, resistance: stats.resistance,
-          position: state.placedHeroes[heroId], icon: hero.icon, portraitSeed: hero.portraitSeed,
+          position: state.placedHeroes[key], icon: hero.icon, portraitSeed: hero.portraitSeed,
           stars: hero.stars, abilityId: hero.abilityId,
         });
       });
@@ -1039,6 +1146,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   openMysteryChest: async (rarity) => {
     const state = get();
+    const empty: ChestReward = { items: [], heroCards: [], gold: 0, gems: 0 };
     const costs: Record<typeof rarity, { gold?: number; gems?: number }> = {
       wooden: { gold: 200 },
       silver: { gold: 800 },
@@ -1046,10 +1154,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
       mythic: { gems: 100 },
     } as any;
     const cost = costs[rarity];
-    if (cost.gold && state.gold < cost.gold) return { items: [], gold: 0, gems: 0 };
-    if (cost.gems && state.gems < cost.gems) return { items: [], gold: 0, gems: 0 };
+    if (cost.gold && state.gold < cost.gold) return empty;
+    if (cost.gems && state.gems < cost.gems) return empty;
 
-    // Reward weights per chest tier.
+    // Weighted rarity pick from a {rarity: weight} table.
+    const pickRarity = (weights: Partial<Record<string, number>>): string => {
+      const totalW = Object.values(weights).reduce<number>((s, n) => s + (n ?? 0), 0);
+      let roll = Math.random() * totalW;
+      for (const [k, v] of Object.entries(weights)) {
+        if (v == null) continue;
+        if (roll < v) return k;
+        roll -= v;
+      }
+      return 'common';
+    };
+
+    // ---- Gear rolls -------------------------------------------------------
     const tierWeights: Record<typeof rarity, Partial<Record<string, number>>> = {
       wooden: { common: 60, rare: 30, epic: 9, legendary: 1, mythic: 0 },
       silver: { common: 20, rare: 50, epic: 25, legendary: 5, mythic: 0 },
@@ -1060,20 +1180,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const rolls = rarity === 'mythic' ? 5 : rarity === 'gold' ? 4 : rarity === 'silver' ? 3 : 2;
     const pool = Object.values(EQUIPMENT);
     for (let r = 0; r < rolls; r++) {
-      // Weighted rarity pick.
-      const weights = tierWeights[rarity];
-      const totalW = Object.values(weights).reduce<number>((s, n) => s + (n ?? 0), 0);
-      let roll = Math.random() * totalW;
-      let pickedRarity = 'common';
-      for (const [k, v] of Object.entries(weights)) {
-        if (v == null) continue;
-        if (roll < v) { pickedRarity = k; break; }
-        roll -= v;
-      }
-      const candidates = pool.filter((p) => p.rarity === pickedRarity);
+      const candidates = pool.filter((p) => p.rarity === pickRarity(tierWeights[rarity]));
       const pick = candidates[Math.floor(Math.random() * candidates.length)];
       if (pick) items.push({ id: pick.id, qty: 1 });
     }
+
+    // ---- Hero card rolls --------------------------------------------------
+    const cardTierWeights: Record<typeof rarity, Partial<Record<string, number>>> = {
+      wooden: { common: 62, rare: 30, epic: 7, legendary: 1, mythic: 0 },
+      silver: { common: 30, rare: 45, epic: 20, legendary: 5, mythic: 0 },
+      gold: { common: 10, rare: 30, epic: 35, legendary: 20, mythic: 5 },
+      mythic: { common: 0, rare: 10, epic: 35, legendary: 40, mythic: 15 },
+    } as any;
+    const cardRolls = rarity === 'mythic' ? 4 : rarity === 'gold' ? 3 : rarity === 'silver' ? 2 : 1;
+    const heroPool = Object.values(state.heroes);
+    const cardTally: Record<string, number> = {};
+    for (let r = 0; r < cardRolls; r++) {
+      const cands = heroPool.filter((h) => h.rarity === pickRarity(cardTierWeights[rarity]));
+      const pool2 = cands.length > 0 ? cands : heroPool;
+      const pick = pool2[Math.floor(Math.random() * pool2.length)];
+      if (pick) cardTally[pick.id] = (cardTally[pick.id] ?? 0) + 1;
+    }
+    const heroCardsOut = Object.entries(cardTally).map(([heroId, qty]) => ({ heroId, qty }));
+
     // Bonus gold/gems.
     const bonusGold = rarity === 'mythic' ? 1000 : rarity === 'gold' ? 300 : rarity === 'silver' ? 100 : 30;
     const bonusGems = rarity === 'mythic' ? 25 : rarity === 'gold' ? 8 : rarity === 'silver' ? 2 : 0;
@@ -1084,13 +1213,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const eq = newEquipment[it.id];
       if (eq) newEquipment[it.id] = { ...eq, owned: eq.owned + it.qty };
     }
+    const newHeroCards = { ...state.heroCards };
+    const newHeroes = { ...state.heroes };
+    for (const { heroId, qty } of heroCardsOut) {
+      newHeroCards[heroId] = (newHeroCards[heroId] ?? 0) + qty;
+      const h = newHeroes[heroId];
+      if (h && !h.unlocked) newHeroes[heroId] = { ...h, unlocked: true };
+    }
     set({
       gold: state.gold - (cost.gold ?? 0) + bonusGold,
       gems: state.gems - (cost.gems ?? 0) + bonusGems,
       equipment: newEquipment,
+      heroCards: newHeroCards,
+      heroes: newHeroes,
     });
     persist(get());
-    return { items, gold: bonusGold, gems: bonusGems };
+    return { items, heroCards: heroCardsOut, gold: bonusGold, gems: bonusGems };
   },
 
   upgradeStronghold: (buildingId) => {
@@ -1125,8 +1263,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const lo = state.loadouts['slot_1'] ?? Object.values(state.loadouts)[0];
       if (lo) {
         const placements: Record<string, GridPosition> = {};
-        for (const [hid, pos] of Object.entries(lo.placements)) {
-          if (state.heroes[hid]?.unlocked) placements[hid] = pos;
+        for (const [key, pos] of Object.entries(lo.placements)) {
+          if (state.heroes[heroIdOfPlacement(key)]?.unlocked) placements[key] = pos;
         }
         set({ placedHeroes: placements });
       } else {
@@ -1139,41 +1277,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
   summonHero: async () => {
     const state = get();
     const cost = 100;
-    if (state.gems < cost) return {};
-    const locked = Object.values(state.heroes).filter((h) => !h.unlocked);
-    if (locked.length === 0) {
-      // All unlocked: convert into either gold, gems, or random shards.
-      const r = Math.random();
-      if (r < 0.4) {
-        const gold = 500 + Math.floor(Math.random() * 500);
-        set({ gems: state.gems - cost, gold: state.gold + gold });
-        persist(get());
-        return { reward: { kind: 'gold', value: gold } };
-      } else if (r < 0.7) {
-        const gems = 30 + Math.floor(Math.random() * 40);
-        set({ gems: state.gems - cost + gems });
-        persist(get());
-        return { reward: { kind: 'gems', value: gems } };
-      } else {
-        const ids = Object.keys(state.equipment);
-        const id = ids[Math.floor(Math.random() * ids.length)];
-        const eq = state.equipment[id];
-        const shards = 5 + Math.floor(Math.random() * 8);
-        set({
-          gems: state.gems - cost,
-          equipment: { ...state.equipment, [id]: { ...eq, shards: eq.shards + shards } },
-        });
-        persist(get());
-        return { reward: { kind: 'shards', value: shards } };
-      }
-    }
-    // Weighted by inverse rarity: common 50, rare 30, epic 15, legendary 4, mythic 1.
+    if (state.gems < cost) return null;
+    // Weighted by inverse rarity: common 50, rare 30, epic 15, legendary 4,
+    // mythic 1. Locked heroes are favoured so the roster fills out, but
+    // duplicate pulls are valid — they hand over extra cards.
     const rarityWeight: Record<string, number> = {
       common: 50, rare: 30, epic: 15, legendary: 4, mythic: 1,
     };
-    const weighted: Array<{ id: string; weight: number }> = locked.map((h) => ({
-      id: h.id, weight: rarityWeight[h.rarity] ?? 10,
-    }));
+    const locked = Object.values(state.heroes).filter((h) => !h.unlocked);
+    const pickFrom = locked.length > 0 && Math.random() < 0.78
+      ? locked
+      : Object.values(state.heroes);
+    const weighted = pickFrom.map((h) => ({ id: h.id, weight: rarityWeight[h.rarity] ?? 10 }));
     const totalWeight = weighted.reduce((s, w) => s + w.weight, 0);
     let roll = Math.random() * totalWeight;
     let pickedId = weighted[0].id;
@@ -1181,12 +1296,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (roll < w.weight) { pickedId = w.id; break; }
       roll -= w.weight;
     }
+    const wasLocked = !state.heroes[pickedId].unlocked;
+    const cardCount = wasLocked ? 1 : 1 + Math.floor(Math.random() * 2);
     set({
       gems: state.gems - cost,
       heroes: { ...state.heroes, [pickedId]: { ...state.heroes[pickedId], unlocked: true } },
+      heroCards: { ...state.heroCards, [pickedId]: (state.heroCards[pickedId] ?? 0) + cardCount },
     });
     persist(get());
-    return { heroId: pickedId };
+    return { heroId: pickedId, isNew: wasLocked, cardCount };
   },
 
   setBattleSpeed: (s) => { set({ battleSpeed: s }); persist(get()); },
@@ -1216,10 +1334,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
             ...heroes[id],
             level: lvl,
             stars,
+            rank: Math.max(0, Math.min(MAX_HERO_RANK, heroes[id].rank ?? 0)),
             baseStats: rebaseBaseStats(source.baseStats, lvl, stars),
             experience: lvl >= MAX_HERO_LEVEL ? 0 : heroes[id].experience,
             experienceToNext: lvl >= MAX_HERO_LEVEL ? 1 : Math.round(100 * Math.pow(1.3, lvl)),
           };
+        }
+        // Hero cards: every owned hero keeps at least one card; saved counts
+        // win when present. Old saves predate the card economy entirely.
+        const heroCards: Record<string, number> = {};
+        for (const id in heroes) {
+          const saved = parsed.heroCards?.[id];
+          if (typeof saved === 'number' && saved > 0) heroCards[id] = saved;
+          else if (heroes[id].unlocked) heroCards[id] = 1;
         }
         const equipment = { ...buildInitialEquipment() };
         for (const id in equipment) {
@@ -1255,6 +1382,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         set({
           ...parsed,
           heroes,
+          heroCards,
           equipment,
           achievements,
           placedHeroes,
@@ -1294,6 +1422,7 @@ function persist(state: GameState) {
       gold: state.gold,
       gems: state.gems,
       heroes: state.heroes,
+      heroCards: state.heroCards,
       equipment: state.equipment,
       levelProgress: state.levelProgress,
       achievements: state.achievements,
@@ -1360,14 +1489,18 @@ export function getHeroEffectiveStats(heroId: string, store: GameStore): Effecti
 
   // Star multiplier is intentionally small — the bulk of the per-star
   // boost is folded into baseStats during ascendHero / hydrate rebase.
+  // Rank (from combining hero cards) grants a flat per-rank multiplier on
+  // top, applied to HP / ATK / DEF.
   const starMul = 1 + hero.stars * 0.03;
+  const rankMul = 1 + (hero.rank ?? 0) * RANK_BOOST;
+  const coreMul = starMul * rankMul;
   const mile = computeMilestoneBonuses(hero.kills ?? 0, hero.battlesUsed ?? 0);
 
   const pre: HeroStats = {
-    hp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * starMul),
-    maxHp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * starMul),
-    attack: Math.round((hero.baseStats.attack + sumBonus('attack') + setAttack + mile.attack) * starMul),
-    defense: Math.round((hero.baseStats.defense + sumBonus('defense') + setDefense + mile.defense) * starMul),
+    hp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * coreMul),
+    maxHp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * coreMul),
+    attack: Math.round((hero.baseStats.attack + sumBonus('attack') + setAttack + mile.attack) * coreMul),
+    defense: Math.round((hero.baseStats.defense + sumBonus('defense') + setDefense + mile.defense) * coreMul),
     speed: hero.baseStats.speed + sumBonus('speed'),
     range: hero.baseStats.range,
     critRate: Math.min(0.85, hero.baseStats.critRate + sumBonus('critRate') + setCrit + mile.critRate),
