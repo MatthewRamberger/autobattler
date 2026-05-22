@@ -65,12 +65,26 @@ export interface Projectile {
   id: string; from: GridPosition; to: GridPosition; element: Element; anim: Animated.Value;
 }
 
+export interface UnitStatLine {
+  id: string;
+  name: string;
+  heroClass: string;
+  icon: string;
+  isPlayer: boolean;
+  isAlive: boolean;
+  damageDealt: number;
+  damageTaken: number;
+  healingDone: number;
+  killCount: number;
+}
+
 export interface BattleResultSummary {
   won: boolean; gold: number; exp: number; drop?: string;
   damageDealt: number; healingDone: number; killCount: number;
+  unitStats: UnitStatLine[];
 }
 
-export type Phase = 'running' | 'paused' | 'done';
+export type Phase = 'running' | 'paused' | 'done' | 'turn-wait';
 
 /**
  * Owns the pre-computed battle, plays its event stream back on a timer, and
@@ -251,6 +265,9 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
   const finalUnits = useRef<BattleUnit[]>([]);
   const paused = useRef(false);
   const done = useRef(false);
+  // Dedup key set so turn-by-turn doesn't double-push log entries when a
+  // turn straddles a tick boundary that the loop visits twice.
+  const displayedLogTicks = useRef<Set<string>>(new Set());
 
   const safeSet = useCallback(<T,>(setter: (v: T) => void, value: T) => {
     if (mounted.current) setter(value);
@@ -306,6 +323,11 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
     events.current = [];
     logs.current = [];
     finalUnits.current = [];
+    displayedLogTicks.current = new Set();
+    turnSourceRef.current = null;
+    // Snapshot turn-by-turn setting at battle start so toggling mid-fight
+    // doesn't deadlock the loop.
+    turnByTurnRef.current = !!store.settings?.turnByTurn;
     safeSet(setPhase, 'running');
     safeSet(setTick, 0);
     safeSet(setLog, []);
@@ -387,20 +409,34 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Turn-by-turn: track which source we're currently presenting so we can
+  // pause AFTER that source's full action (attack + resolution events) and
+  // wait for the user to advance. Set whenever an action event is dispatched.
+  const turnSourceRef = useRef<string | null>(null);
+  // Snapshot of settings.turnByTurn captured at battle start. We don't react
+  // to mid-battle toggles so the flow can't deadlock.
+  const turnByTurnRef = useRef<boolean>(false);
+
   // ---- replay loop -----------------------------------------------------------
   // A self-rescheduling timeout: each tick processes one batch of events,
   // then schedules the next. Cleanup cancels the next callback on phase /
   // battle-speed change or unmount.
+  //
+  // Turn-by-turn flavor: we cut events at "action boundaries" — every
+  // move/attack/projectile/ability from a NEW source ends the current
+  // turn. When that mode is on, after each turn we flip phase to
+  // 'turn-wait' and stop until the user calls advanceTurn().
   useEffect(() => {
     if (phase !== 'running') return;
     let cancelled = false;
     let tid: ReturnType<typeof setTimeout> | null = null;
 
+    const isActionEvent = (e: BattleEvent) =>
+      e.kind === 'move' || e.kind === 'attack' || e.kind === 'projectile' || e.kind === 'ability';
+
     const runOne = () => {
       if (cancelled || !mounted.current || done.current) return;
       if (paused.current) {
-        // Loop will get cancelled when phase flips to 'paused' (cleanup),
-        // but as a safety check we don't process while paused.
         tid = setTimeout(runOne, 100);
         return;
       }
@@ -409,6 +445,62 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
         finish();
         return;
       }
+
+      if (turnByTurnRef.current) {
+        // Process exactly one "actor turn": consume events until either
+        //  - we see a NEW action event whose source differs from the one
+        //    we already accepted for this turn, OR
+        //  - we run out of events.
+        const batch: BattleEvent[] = [];
+        let turnSource: string | null = null;
+        let consumedAction = false;
+        while (evIdx.current < evs.length) {
+          const e = evs[evIdx.current];
+          if (isActionEvent(e)) {
+            if (!consumedAction) {
+              turnSource = e.sourceId ?? null;
+              consumedAction = true;
+              batch.push(e);
+              evIdx.current++;
+              continue;
+            }
+            // Hitting another action event with a different source ends
+            // this turn. Don't consume it; it kicks off the next one.
+            if (e.sourceId !== turnSource) break;
+            // Same source firing another action (rare — e.g. multi-hit
+            // ability emitting its own events) — fold into this turn.
+            batch.push(e);
+            evIdx.current++;
+            continue;
+          }
+          // Non-action events (damage/heal/status/etc) belong to the most
+          // recent action's resolution. Always include them.
+          batch.push(e);
+          evIdx.current++;
+        }
+
+        if (batch.length) {
+          const lastTick = batch[batch.length - 1].tick;
+          tickRef.current = lastTick;
+          safeSet(setTick, lastTick);
+          applyEvents(batch);
+          const ticks = new Set(batch.map((b) => b.tick));
+          const newLogs = logs.current.filter((e) => ticks.has(e.tick) && !displayedLogTicks.current.has(`${e.tick}_${e.text}`));
+          for (const l of newLogs) displayedLogTicks.current.add(`${l.tick}_${l.text}`);
+          if (newLogs.length) setLog((prev) => [...prev, ...newLogs]);
+          turnSourceRef.current = turnSource;
+        }
+
+        // Either wait for advance or finish.
+        if (evIdx.current >= evs.length) {
+          finish();
+        } else {
+          safeSet(setPhase, 'turn-wait');
+        }
+        return;
+      }
+
+      // Normal continuous playback — process all events at the current tick.
       const t = evs[evIdx.current]?.tick ?? tickRef.current;
       tickRef.current = t;
       safeSet(setTick, t);
@@ -418,7 +510,8 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
         evIdx.current++;
       }
       applyEvents(batch);
-      const newLogs = logs.current.filter((e) => e.tick === t);
+      const newLogs = logs.current.filter((e) => e.tick === t && !displayedLogTicks.current.has(`${e.tick}_${e.text}`));
+      for (const l of newLogs) displayedLogTicks.current.add(`${l.tick}_${l.text}`);
       if (newLogs.length) setLog((prev) => [...prev, ...newLogs]);
       tid = setTimeout(runOne, BASE_TICK_MS / Math.max(1, store.battleSpeed));
     };
@@ -484,7 +577,12 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
           case 'damage':
             if (ev.targetId) {
               const id = ev.targetId;
-              patch(id, (u) => ({ ...u, hp: Math.max(0, u.hp - (ev.value ?? 0)) }));
+              const dmg = ev.value ?? 0;
+              patch(id, (u) => ({ ...u, hp: Math.max(0, u.hp - dmg), damageTaken: u.damageTaken + dmg }));
+              if (ev.sourceId) {
+                const src = ev.sourceId;
+                next = next.map((u) => (u.id === src ? { ...u, damageDealt: u.damageDealt + dmg } : u));
+              }
               const a = map.get(id);
               if (a && !reduce) fx.push(() => {
                 a.shake.setValue(0);
@@ -508,7 +606,12 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
           case 'heal':
             if (ev.targetId && ev.value) {
               const id = ev.targetId;
-              patch(id, (u) => ({ ...u, hp: Math.min(u.maxHp, u.hp + (ev.value ?? 0)) }));
+              const heal = ev.value ?? 0;
+              patch(id, (u) => ({ ...u, hp: Math.min(u.maxHp, u.hp + heal) }));
+              if (ev.sourceId) {
+                const src = ev.sourceId;
+                next = next.map((u) => (u.id === src ? { ...u, healingDone: u.healingDone + heal } : u));
+              }
               float(id, `+${ev.value}`, '#5ef07a');
             }
             break;
@@ -613,6 +716,12 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       const dmg = pUnits.reduce((s, u) => s + u.damageDealt, 0);
       const heal = pUnits.reduce((s, u) => s + u.healingDone, 0);
       const kills = pUnits.reduce((s, u) => s + u.killCount, 0);
+      const unitStats: UnitStatLine[] = fin.map((u) => ({
+        id: u.id, name: u.name, heroClass: u.heroClass, icon: u.icon,
+        isPlayer: u.isPlayer, isAlive: u.isAlive,
+        damageDealt: u.damageDealt, damageTaken: u.damageTaken,
+        healingDone: u.healingDone, killCount: u.killCount,
+      }));
 
       let summary: BattleResultSummary;
       if (isArena) {
@@ -620,7 +729,7 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
         const exp = won ? 20 + arenaWave * 10 : 5;
         applyBattleRewards(won, gold, exp, heroIds, { damage: dmg, kills });
         if (won) setArenaWave(arenaWave + 1);
-        summary = { won, gold, exp, damageDealt: dmg, healingDone: heal, killCount: kills };
+        summary = { won, gold, exp, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats };
       } else if (level) {
         const drops = level.rewards.possibleDrops;
         const drop = drops[Math.floor(Math.random() * drops.length)];
@@ -628,22 +737,42 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
         const gold = won ? level.rewards.gold : Math.floor(level.rewards.gold * 0.25);
         const exp = won ? level.rewards.experience : Math.floor(level.rewards.experience * 0.1);
         applyBattleRewards(won, gold, exp, heroIds, { damage: dmg, kills }, actualDrop);
-        summary = { won, gold, exp, drop: actualDrop, damageDealt: dmg, healingDone: heal, killCount: kills };
+        summary = { won, gold, exp, drop: actualDrop, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats };
       } else {
-        summary = { won, gold: 0, exp: 0, damageDealt: dmg, healingDone: heal, killCount: kills };
+        summary = { won, gold: 0, exp: 0, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats };
       }
       safeSet(setResult, summary);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn('[battle] finish/rewards failed', err);
-      safeSet(setResult, { won: false, gold: 0, exp: 0, damageDealt: 0, healingDone: 0, killCount: 0 });
+      safeSet(setResult, { won: false, gold: 0, exp: 0, damageDealt: 0, healingDone: 0, killCount: 0, unitStats: [] });
     }
   }
 
   const togglePause = useCallback(() => {
     if (done.current) return;
+    // From the turn-wait state, treat pause toggle as "exit turn-by-turn for
+    // this fight" — flip to running so playback continues.
     paused.current = !paused.current;
     safeSet(setPhase, paused.current ? 'paused' : 'running');
+  }, [safeSet]);
+
+  const advanceTurn = useCallback(() => {
+    if (done.current) return;
+    // From either turn-wait or paused, resume into the running phase. The
+    // replay-loop effect re-arms on phase change.
+    paused.current = false;
+    safeSet(setPhase, 'running');
+  }, [safeSet]);
+
+  const toggleTurnByTurn = useCallback(() => {
+    if (done.current) return;
+    turnByTurnRef.current = !turnByTurnRef.current;
+    // If we just turned it OFF mid-pause, push the loop back into running.
+    if (!turnByTurnRef.current) {
+      paused.current = false;
+      safeSet(setPhase, 'running');
+    }
   }, [safeSet]);
 
   const fastForward = useCallback(() => {
@@ -660,6 +789,8 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
 
   return {
     isArena, level, phase, units, log, vfx, projectiles, tick, result,
-    getAnims, togglePause, fastForward,
+    getAnims, togglePause, fastForward, advanceTurn, toggleTurnByTurn,
+    turnByTurnActive: turnByTurnRef.current,
+    turnSourceId: turnSourceRef.current,
   };
 }

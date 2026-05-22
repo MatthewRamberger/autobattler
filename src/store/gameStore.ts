@@ -191,7 +191,7 @@ const INITIAL_STATE: GameState = {
   lastLoginDay: 0,
   loadouts: {},
   stronghold: {},
-  settings: { particles: true, reduceMotion: false, autoFastForward: false },
+  settings: { particles: true, reduceMotion: false, autoFastForward: false, turnByTurn: false },
 };
 
 function generateShop(): ShopItem[] {
@@ -1259,6 +1259,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           achievements,
           placedHeroes,
           loadouts,
+          // Merge settings so newly added options (e.g. turnByTurn) get their
+          // defaults rather than `undefined` on old saves.
+          settings: { ...INITIAL_STATE.settings, ...(parsed.settings ?? {}) },
           hydrated: true,
         });
       } else {

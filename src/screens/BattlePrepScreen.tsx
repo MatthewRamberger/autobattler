@@ -9,8 +9,7 @@ import {
 import { LEVELS } from '../data/levels';
 import { GridPosition } from '../types';
 import HeroPortrait from '../components/HeroPortrait';
-import Sprite from '../components/battle/spriteRenderer';
-import { spriteFor } from '../components/battle/spriteLibrary';
+import { MiniUnitPortrait } from '../components/battle/UnitAvatar';
 import { Hex } from '../components/battle/Arena';
 import { gridForLevel, hexLayout, hexCenter, HexLayout } from '../utils/hex';
 import {
@@ -120,20 +119,20 @@ export default function BattlePrepScreen() {
             alignItems: 'center', justifyContent: 'center',
           }}>
             {placedHero ? (
-              <Sprite
-                def={spriteFor({
-                  heroId: placedHero.id, icon: placedHero.icon,
-                  heroClass: placedHero.heroClass, isPlayer: true,
-                })}
+              <MiniUnitPortrait
+                icon={placedHero.icon}
+                heroClass={placedHero.heroClass}
+                isPlayer={true}
                 size={spriteH}
+                stars={placedHero.stars}
               />
             ) : enemyHere ? (
-              <Sprite
-                def={spriteFor({
-                  icon: enemyHere.icon, heroClass: enemyHere.heroClass, isPlayer: false,
-                })}
+              <MiniUnitPortrait
+                icon={enemyHere.icon}
+                heroClass={enemyHere.heroClass}
+                isPlayer={false}
                 size={spriteH}
-                flip
+                stars={enemyHere.stars}
               />
             ) : isPlayer ? (
               <Text style={styles.plus}>＋</Text>
