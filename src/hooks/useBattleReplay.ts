@@ -391,9 +391,12 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
             if (ev.unit && ev.unit.position && !next.some((p) => p.id === ev.unit!.id)) {
               const su = ev.unit;
               if (!map.has(su.id)) map.set(su.id, makeAnims(su.isPlayer ? 1 : -1));
-              const a = map.get(su.id)!;
-              a.scale.setValue(0);
-              fx.push(() => Animated.spring(a.scale, { toValue: 1, useNativeDriver: true, friction: 5 }).start());
+              // Important: leave scale at the default 1. Earlier rounds tried
+              // a 0 → 1 spring pop, but if the spring fails to fire (which
+              // we've seen happen with native-driver Animated.Values in this
+              // RN combo) the new unit stays at scale 0 forever — invisible
+              // even though it's correctly in the units state. The HUD enemy
+              // count would tick up but the user sees nothing on the field.
               next = [...next, { ...su, position: { ...su.position } }];
             }
             break;

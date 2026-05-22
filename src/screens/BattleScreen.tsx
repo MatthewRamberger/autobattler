@@ -140,9 +140,9 @@ export default function BattleScreen() {
       )}
 
       {/* Combat log */}
-      <Panel style={styles.logPanel} padded={false}>
+      <Panel style={styles.logPanel} padded={false} flexFill>
         <View style={styles.logHead}>
-          <Text style={styles.logTitle}>⚔ COMBAT LOG</Text>
+          <Text style={styles.logTitle}>⚔ COMBAT LOG · {filteredLog.length}</Text>
           <View style={styles.logFilters}>
             {(['all', 'crits', 'heals', 'abilities', 'deaths'] as const).map((f) => (
               <TouchableOpacity key={f} onPress={() => setLogFilter(f)} style={[styles.chip, logFilter === f && styles.chipOn]}>

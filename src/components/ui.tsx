@@ -130,12 +130,27 @@ export function GButton({
 // Gold-framed panel (Clash of Clans card)
 // ----------------------------------------------------------------
 export function Panel({
-  children, style, padded = true, glow,
-}: { children?: React.ReactNode; style?: StyleProp<ViewStyle>; padded?: boolean; glow?: string }) {
+  children, style, padded = true, glow, flexFill,
+}: {
+  children?: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  padded?: boolean;
+  glow?: string;
+  /** Forward flex:1 to the inner LinearGradient + body so a flex parent's
+   *  vertical space actually reaches the panel's content (e.g. a
+   *  ScrollView inside the panel). Off by default to avoid disturbing the
+   *  content-sized Panels used elsewhere. */
+  flexFill?: boolean;
+}) {
   return (
     <View style={[uiStyles.panelOuter, glow ? shadow.glow(glow) : shadow.card, style]}>
-      <LinearGradient colors={gradients.panel} style={uiStyles.panelInner}>
-        <View style={[uiStyles.panelBody, padded && { padding: spacing.md }]}>{children}</View>
+      <LinearGradient
+        colors={gradients.panel}
+        style={[uiStyles.panelInner, flexFill && { flex: 1 }]}
+      >
+        <View style={[uiStyles.panelBody, flexFill && { flex: 1 }, padded && { padding: spacing.md }]}>
+          {children}
+        </View>
       </LinearGradient>
     </View>
   );
