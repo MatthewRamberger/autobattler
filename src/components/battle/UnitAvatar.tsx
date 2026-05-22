@@ -38,8 +38,34 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
   const top = cy - cellH / 2;
 
   const facing = anims?.facing ?? (unit.isPlayer ? 1 : -1);
-  const lunge = anims ? anims.punch.interpolate({ inputRange: [0, 1], outputRange: [0, facing * (cellW * 0.32)] }) : 0;
+  // `punch` is now signed (can go negative for archer pullback and beyond
+  // 1 for rogue dash bursts) — interpolate generously around the lunge
+  // distance so all attack styles share the same handle without clamping.
+  const lunge = anims
+    ? anims.punch.interpolate({
+        inputRange: [-1, 0, 1, 1.5],
+        outputRange: [-facing * (cellW * 0.22), 0, facing * (cellW * 0.32), facing * (cellW * 0.48)],
+      })
+    : 0;
   const bobY = anims ? anims.bob.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }) : 0;
+  // `rotate` is dual-purpose: small values (-1..1) drive the chop swing
+  // and pullback at ±35°, larger values (1..2) drive full-revolution spins.
+  // Extra breakpoints between 1 and 2 keep the spin's angular velocity
+  // roughly linear so it reads as a continuous turn rather than a jump.
+  const rotateDeg = anims
+    ? anims.rotate.interpolate({
+        inputRange: [-1, 0, 1, 1.25, 1.5, 1.75, 2],
+        outputRange: [
+          `${-facing * 35}deg`,
+          '0deg',
+          `${facing * 35}deg`,
+          `${facing * 200}deg`,
+          `${facing * 380}deg`,
+          `${facing * 560}deg`,
+          `${facing * 720}deg`,
+        ],
+      })
+    : '0deg';
 
   const ring = unit.isPlayer ? palette.blue : palette.red;
   const ability = unit.abilityId ? ABILITIES[unit.abilityId] : null;
@@ -73,6 +99,7 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
             { translateX: anims?.shake ?? 0 },
             { translateX: lunge ?? 0 },
             { translateY: bobY ?? 0 },
+            { rotate: rotateDeg },
             { scale: anims?.scale ?? 1 },
           ],
           opacity: anims?.opacity ?? 1,
@@ -100,6 +127,28 @@ function UnitAvatarBase({ unit, anims, vfx, layout }: Props) {
               borderRadius: spriteH / 2,
               shadowColor: ring,
             }]} />
+
+            {/* Caster glow ring — driven by `cast` so it only flashes
+                during cast_burst / cast_heal attacks. */}
+            {anims?.cast && (
+              <Animated.View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  width: spriteH * 1.25, height: spriteH * 1.25,
+                  borderRadius: spriteH * 0.7,
+                  borderWidth: 3,
+                  borderColor: elementTint ?? '#c9a3ff',
+                  opacity: anims.cast.interpolate({ inputRange: [0, 1], outputRange: [0, 0.85] }),
+                  transform: [{ scale: anims.cast.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.15] }) }],
+                  shadowColor: elementTint ?? '#c9a3ff',
+                  shadowOpacity: 1,
+                  shadowRadius: 14,
+                  shadowOffset: { width: 0, height: 0 },
+                  elevation: 10,
+                }}
+              />
+            )}
 
             <View style={[styles.spriteSlot, { width: spriteH, height: spriteH }]}>
               <Sprite

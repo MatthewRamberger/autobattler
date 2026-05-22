@@ -11,7 +11,11 @@ import { HEX_COLS, HEX_ROWS, HexGrid, HexLayout, hexCenter } from '../utils/hex'
 // Legacy re-exports — kept so older imports still resolve.
 export const GRID_COLS = HEX_COLS;
 export const GRID_ROWS = HEX_ROWS;
-const BASE_TICK_MS = 460;
+// Slowed from 460 → 720 so individual attacks read clearly and the
+// per-class attack animations have time to play out before the next
+// event batch. battleSpeed (1×/2×/4×) still divides this so impatient
+// players can fast-forward.
+const BASE_TICK_MS = 720;
 
 export interface UnitAnims {
   // Scale/opacity/flash/bob/shake/punch are still Animated.Values so we
@@ -23,12 +27,31 @@ export interface UnitAnims {
   // RN + React combo were silently failing to propagate updates.
   flash: Animated.Value;        // 0..1 hit flash
   shake: Animated.Value;        // px shake
-  punch: Animated.Value;        // 0..1 attack lunge
+  punch: Animated.Value;        // 0..1 attack lunge (+ chop/dash blend)
   scale: Animated.Value;        // spawn/death scale
   opacity: Animated.Value;      // death fade
   bob: Animated.Value;          // idle bob 0..1 (looping)
+  rotate: Animated.Value;       // -1..1 → -45°..+45° (chops, spins)
+  cast: Animated.Value;         // 0..1 caster pulse (mage/cleric glow)
   facing: 1 | -1;               // attack lunge direction
+  // Drives which timing curve `punch` is currently mid-play (so the
+  // avatar component can blend extra effects per attack style — e.g.
+  // archers get a pullback before the snap). Set fresh on every
+  // attack event by the per-class dispatcher.
+  attackStyle: AttackStyle;
 }
+
+// Per-class attack visual identity. Each style drives a slightly
+// different combination of punch/rotate/scale/cast on the shared
+// UnitAnims handles. Pure presentation — no engine effect.
+export type AttackStyle =
+  | 'melee_chop'   // Warrior/Paladin: heavy overhead chop
+  | 'melee_spin'  // Berserker: spinning attack
+  | 'melee_dash'   // Rogue/Monk: fast dash strike
+  | 'ranged_snap'  // Archer: pullback then snap
+  | 'cast_burst'  // Mage/Necromancer: cast pose + burst
+  | 'cast_heal'    // Cleric/Druid: gentle uplift glow
+  | 'generic';
 
 export interface LiveUnit extends BattleUnit {
   position: GridPosition;
@@ -61,6 +84,145 @@ export type Phase = 'running' | 'paused' | 'done';
  * the effect cleanup cancels the next callback. Resuming or rotating speed
  * re-arms the loop.
  */
+// Map a hero class to its signature attack visual. Projectile attacks
+// route through `ranged_snap` for archer-shaped classes and `cast_burst`
+// for caster-shaped ones; everything else is melee.
+export function attackStyleFor(heroClass: string, isProjectile: boolean): AttackStyle {
+  if (isProjectile) {
+    switch (heroClass) {
+      case 'Archer': return 'ranged_snap';
+      case 'Mage':
+      case 'Necromancer': return 'cast_burst';
+      case 'Cleric':
+      case 'Druid': return 'cast_heal';
+      default: return 'ranged_snap';
+    }
+  }
+  switch (heroClass) {
+    case 'Warrior':
+    case 'Paladin': return 'melee_chop';
+    case 'Berserker': return 'melee_spin';
+    case 'Rogue':
+    case 'Monk': return 'melee_dash';
+    case 'Archer': return 'ranged_snap';
+    case 'Mage':
+    case 'Necromancer': return 'cast_burst';
+    case 'Cleric':
+    case 'Druid': return 'cast_heal';
+    default: return 'generic';
+  }
+}
+
+// Run the per-class attack animation. Each style reuses the same shared
+// UnitAnims handles (punch, rotate, scale, cast) but in different
+// proportions so each class reads distinctly on screen.
+//
+// punch  → translateX  (forward lunge / dash)
+// rotate → rotation    (chop swing / spin / pullback)
+// scale  → bump        (pre-cast charge / dash burst)
+// cast   → outer glow  (caster ring opacity)
+export function playAttackAnim(a: UnitAnims, style: AttackStyle) {
+  // Always reset shared values first so consecutive attacks don't pile up.
+  a.punch.setValue(0); a.rotate.setValue(0); a.cast.setValue(0);
+  switch (style) {
+    case 'melee_chop':
+      // Wind back, then chop down + forward step.
+      Animated.sequence([
+        Animated.timing(a.rotate, { toValue: -0.55, duration: 130, useNativeDriver: true }),
+        Animated.parallel([
+          Animated.timing(a.rotate, { toValue: 0.55, duration: 150, useNativeDriver: true }),
+          Animated.timing(a.punch, { toValue: 1, duration: 150, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(a.rotate, { toValue: 0, duration: 220, useNativeDriver: true }),
+          Animated.timing(a.punch, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]),
+      ]).start();
+      break;
+    case 'melee_spin':
+      // Continuous accelerating spin (0 → 2 maps to 0° → 720°), with a
+      // small lunge in the middle. Snapping from 2 → 0 at the end is
+      // visually invisible because 720° ≡ 0° on the rotation circle.
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(a.rotate, { toValue: 2, duration: 380, useNativeDriver: true }),
+          Animated.timing(a.rotate, { toValue: 0, duration: 0, useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(a.punch, { toValue: 0.7, duration: 200, useNativeDriver: true }),
+          Animated.timing(a.punch, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]),
+      ]).start();
+      break;
+    case 'melee_dash':
+      // Crouch-and-burst forward dash.
+      Animated.sequence([
+        Animated.timing(a.scale, { toValue: 0.88, duration: 90, useNativeDriver: true }),
+        Animated.parallel([
+          Animated.timing(a.scale, { toValue: 1.08, duration: 100, useNativeDriver: true }),
+          Animated.timing(a.punch, { toValue: 1.2, duration: 110, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(a.scale, { toValue: 1, duration: 200, useNativeDriver: true }),
+          Animated.timing(a.punch, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]),
+      ]).start();
+      break;
+    case 'ranged_snap':
+      // Pull back, then release forward.
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(a.punch, { toValue: -0.4, duration: 220, useNativeDriver: true }),
+          Animated.timing(a.scale, { toValue: 0.96, duration: 220, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(a.punch, { toValue: 0.55, duration: 120, useNativeDriver: true }),
+          Animated.timing(a.scale, { toValue: 1.04, duration: 120, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(a.punch, { toValue: 0, duration: 220, useNativeDriver: true }),
+          Animated.timing(a.scale, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]),
+      ]).start();
+      break;
+    case 'cast_burst':
+      // Caster floats up + outer glow ring pulses.
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(a.scale, { toValue: 1.12, duration: 240, useNativeDriver: true }),
+          Animated.timing(a.scale, { toValue: 1, duration: 260, useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(a.cast, { toValue: 1, duration: 240, useNativeDriver: true }),
+          Animated.timing(a.cast, { toValue: 0, duration: 280, useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(a.punch, { toValue: 0.3, duration: 220, useNativeDriver: true }),
+          Animated.timing(a.punch, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]),
+      ]).start();
+      break;
+    case 'cast_heal':
+      // Gentle uplift, no forward motion.
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(a.scale, { toValue: 1.08, duration: 280, useNativeDriver: true }),
+          Animated.timing(a.scale, { toValue: 1, duration: 320, useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(a.cast, { toValue: 1, duration: 280, useNativeDriver: true }),
+          Animated.timing(a.cast, { toValue: 0, duration: 320, useNativeDriver: true }),
+        ]),
+      ]).start();
+      break;
+    default:
+      Animated.sequence([
+        Animated.timing(a.punch, { toValue: 1, duration: 140, useNativeDriver: true }),
+        Animated.timing(a.punch, { toValue: 0, duration: 200, useNativeDriver: true }),
+      ]).start();
+  }
+}
+
 export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
   const store = useGameStore();
   const {
@@ -102,12 +264,15 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       scale: new Animated.Value(1),
       opacity: new Animated.Value(1),
       bob: new Animated.Value(0),
+      rotate: new Animated.Value(0),
+      cast: new Animated.Value(0),
       facing,
+      attackStyle: 'generic',
     };
     Animated.loop(
       Animated.sequence([
-        Animated.timing(a.bob, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(a.bob, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(a.bob, { toValue: 1, duration: 1200, useNativeDriver: true }),
+        Animated.timing(a.bob, { toValue: 0, duration: 1200, useNativeDriver: true }),
       ])
     ).start();
     return a;
@@ -297,18 +462,22 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
           case 'attack':
           case 'projectile':
             if (ev.sourceId) {
+              const src = next.find((u) => u.id === ev.sourceId);
               const a = map.get(ev.sourceId);
-              if (a && !reduce) fx.push(() => Animated.sequence([
-                Animated.timing(a.punch, { toValue: 1, duration: 110, useNativeDriver: true }),
-                Animated.timing(a.punch, { toValue: 0, duration: 160, useNativeDriver: true }),
-              ]).start());
+              if (a && !reduce && src) {
+                const style = attackStyleFor(src.heroClass, ev.kind === 'projectile');
+                a.attackStyle = style;
+                fx.push(() => playAttackAnim(a, style));
+              }
             }
             if (ev.kind === 'projectile' && ev.sourceId && ev.targetId) {
               const s = next.find((u) => u.id === ev.sourceId);
               const tg = next.find((u) => u.id === ev.targetId);
               if (s && tg && particles) {
                 const from = s.position, toP = tg.position, el = ev.element ?? 'physical';
-                fx.push(() => spawnProjectile(from, toP, el));
+                // Projectile launches slightly after the caster's pullback
+                // so the wind-up reads.
+                fx.push(() => scheduleTimeout(() => spawnProjectile(from, toP, el), 180));
               }
             }
             break;
@@ -423,7 +592,9 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
     const id = `p_${Math.random()}`;
     const anim = new Animated.Value(0);
     setProjectiles((prev) => [...prev, { id, from, to, element, anim }]);
-    Animated.timing(anim, { toValue: 1, duration: 230, useNativeDriver: true }).start(() => {
+    // Slowed (230 → 340ms) to match the new tick cadence and make the
+    // arc of arrows / spells clearly readable.
+    Animated.timing(anim, { toValue: 1, duration: 340, useNativeDriver: true }).start(() => {
       if (mounted.current) setProjectiles((prev) => prev.filter((p) => p.id !== id));
     });
   }
