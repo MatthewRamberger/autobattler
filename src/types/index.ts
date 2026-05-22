@@ -70,27 +70,23 @@ export interface Equipment {
   type: EquipmentType;
   rarity: Rarity;
   icon: string;
-  level: number;       // forge level 0..5
+  // Tier 1..5. Raised by combining 4 duplicate copies (consumes 4, keeps 1
+  // representative at the next tier). Stat bonuses scale by tier.
+  level: number;
   statBonus: Partial<
     Pick<HeroStats, 'hp' | 'attack' | 'defense' | 'speed' | 'critRate' | 'critDamage' | 'dodge' | 'maxMana' | 'manaRegen'>
   >;
-  setId?: string;      // equipment sets that grant synergy bonuses
+  setId?: string;
   requiredClass?: HeroClass[];
   owned: number;
-  shards: number;      // shards needed to forge, accumulated as drops
 }
 
 export interface Hero {
   id: string;
   name: string;
   heroClass: HeroClass;
+  // Hero tier 1..5. Raised only by combining 4 duplicate hero cards.
   level: number;
-  stars: number;            // ascension level, 0..5
-  // Card rank, 0..5. Raised by combining duplicate hero cards. Each rank
-  // grants a flat permanent multiplier to the hero's core stats.
-  rank?: number;
-  experience: number;
-  experienceToNext: number;
   baseStats: Omit<HeroStats, 'hp'>;  // maxHp is in baseStats
   abilityId: string;
   passiveDesc?: string;
@@ -103,8 +99,8 @@ export interface Hero {
   portraitSeed: number;    // drives portrait generation
   description: string;
   favorite?: boolean;
-  // Talent tree: choice index 0/1 per tier (4 tiers). Unlocked at hero
-  // level 5/10/15/20 respectively. -1 means not yet picked.
+  // Talent tree: choice index per tier (4 tiers). Unlocked when the hero
+  // reaches tier 2/3/4/5 respectively. -1 means not yet picked.
   talentChoices?: number[];
   // Per-hero career stats
   battlesUsed?: number;
@@ -351,7 +347,7 @@ export interface AchievementProgress {
 
 export interface ShopItem {
   id: string;
-  itemId: string;    // equipment id OR 'shards:itemId' OR 'gems' OR 'heroSlot:heroId'
+  itemId: string;    // equipment id OR 'gems' OR 'heroSlot:heroId'
   cost: number;
   currency: 'gold' | 'gems';
   stock: number;

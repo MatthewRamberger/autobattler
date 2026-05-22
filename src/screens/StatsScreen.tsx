@@ -14,8 +14,8 @@ export default function StatsScreen() {
 
   const winRate = totalBattles > 0 ? Math.round((totalVictories / totalBattles) * 100) : 0;
   const unlockedCount = Object.values(heroes).filter((h) => h.unlocked).length;
-  const totalHeroLevels = Object.values(heroes).reduce((s, h) => s + h.level, 0);
-  const totalStars = Object.values(heroes).reduce((s, h) => s + h.stars, 0);
+  const totalHeroTiers = Object.values(heroes).reduce((s, h) => s + h.level, 0);
+  const maxTierHeroes = Object.values(heroes).filter((h) => h.level >= 5).length;
   const clearedCount = Object.values(levelProgress).filter((p) => p.completed).length;
   const strongest = Object.values(heroes)
     .filter((h) => h.unlocked)
@@ -45,8 +45,8 @@ export default function StatsScreen() {
         <Panel style={styles.section}>
           <SectionTitle>ROSTER</SectionTitle>
           <Row k="🦸 Heroes" v={`${unlockedCount} / ${Object.keys(heroes).length}`} />
-          <Row k="⬆️ Total levels" v={totalHeroLevels} />
-          <Row k="⭐ Ascension stars" v={totalStars} />
+          <Row k="🃏 Total tiers" v={totalHeroTiers} />
+          <Row k="⭐ Tier 5 heroes" v={maxTierHeroes} />
           <Row k="🗺️ Levels cleared" v={`${clearedCount} / ${LEVELS.length}`} last />
         </Panel>
         <Panel>
@@ -61,9 +61,9 @@ export default function StatsScreen() {
                 <Text style={styles.heroIcon}>{hero.icon}</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.heroName, { color: grad[0] }]}>
-                    {hero.name} {hero.stars > 0 && '★'.repeat(hero.stars)}
+                    {hero.name} {hero.level > 1 && '★'.repeat(hero.level - 1)}
                   </Text>
-                  <Text style={styles.heroMeta}>{hero.heroClass} · Lv.{hero.level}</Text>
+                  <Text style={styles.heroMeta}>{hero.heroClass} · T{hero.level}</Text>
                 </View>
                 <Text style={styles.power}>⚡{stats!.power}</Text>
               </View>

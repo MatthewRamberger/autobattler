@@ -27,10 +27,10 @@ export const STRONGHOLD_BUILDINGS: StrongholdBuilding[] = [
   },
   {
     id: 'arsenal', name: 'Arsenal', icon: '⚒️',
-    description: 'Yields bonus shards on victory.',
+    description: 'Boosts equipment drop chance from battles.',
     maxLevel: 10,
     costFor: (lvl) => ({ gold: 400 + lvl * 300, gems: lvl >= 5 ? 5 : 0 }),
-    effect: (lvl) => `+${lvl} bonus shards / win`,
+    effect: (lvl) => `+${lvl * 4}% extra gear drop chance`,
   },
   {
     id: 'sanctum', name: 'Sanctum', icon: '🕯️',
@@ -47,8 +47,8 @@ export function strongholdGoldMultiplier(levels: Record<string, number>): number
 export function strongholdExpMultiplier(levels: Record<string, number>): number {
   return 1 + 0.05 * (levels['library'] ?? 0);
 }
-export function strongholdShardBonus(levels: Record<string, number>): number {
-  return (levels['arsenal'] ?? 0);
+export function strongholdGearDropBonus(levels: Record<string, number>): number {
+  return 0.04 * (levels['arsenal'] ?? 0);
 }
 export function strongholdStartingMana(levels: Record<string, number>): number {
   return (levels['sanctum'] ?? 0) * 8;

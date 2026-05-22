@@ -312,10 +312,10 @@ export default function HeroPortrait({
         )}
       </View>
 
-      {/* Top-left rank badge */}
+      {/* Top-left tier badge */}
       {level !== undefined && (
         <View style={[styles.cornerBadge, { top: 2, left: 2, backgroundColor: rarityColor }]}>
-          <Text style={[styles.cornerText, { fontSize: Math.max(8, size * 0.11) }]}>Lv{level}</Text>
+          <Text style={[styles.cornerText, { fontSize: Math.max(8, size * 0.11) }]}>T{level}</Text>
         </View>
       )}
 

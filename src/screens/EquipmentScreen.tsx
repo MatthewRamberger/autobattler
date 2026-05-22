@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { useGameStore } from '../store/gameStore';
 import EquipmentCard from '../components/EquipmentCard';
 import { Screen, TopBar, palette } from '../components/ui';
 
 export default function EquipmentScreen() {
-  const { setScreen, equipment, heroes, dismantleEquipment } = useGameStore();
+  const { setScreen, equipment, heroes } = useGameStore();
   const [filter, setFilter] = useState<'all' | 'weapon' | 'armor' | 'accessory'>('all');
   const [rarityFilter, setRarityFilter] = useState<string>('all');
 
@@ -46,24 +46,10 @@ export default function EquipmentScreen() {
         {filtered.length === 0 ? (
           <Text style={styles.empty}>No items.{'\n'}Win battles to earn equipment!</Text>
         ) : filtered.map((item) => (
-          <View key={item.id} style={{ position: 'relative' }}>
-            <EquipmentCard item={item} equipped={equippedIds.has(item.id)} />
-            {item.owned >= 2 && (
-              <TouchableOpacity style={styles.dismantle}
-                onPress={() => {
-                  const y: Record<string, number> = { common: 1, rare: 3, epic: 8, legendary: 20, mythic: 50 };
-                  Alert.alert(`Dismantle ${item.name}?`, `Convert one copy into ${y[item.rarity] ?? 1} shards.`, [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Dismantle', onPress: () => dismantleEquipment(item.id, 1) },
-                  ]);
-                }}>
-                <Text style={styles.dismantleText}>♻</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          <EquipmentCard key={item.id} item={item} equipped={equippedIds.has(item.id)} />
         ))}
       </ScrollView>
-      <Text style={styles.tip}>💡 Equip from HEROES · Upgrade in FORGE</Text>
+      <Text style={styles.tip}>💡 Equip from HEROES · Combine 4 copies in FORGE</Text>
     </Screen>
   );
 }
@@ -83,6 +69,4 @@ const styles = StyleSheet.create({
   rTextOn: { color: '#fff' },
   empty: { color: palette.textDim, fontSize: 14, textAlign: 'center', lineHeight: 22, padding: 50 },
   tip: { color: palette.textDim, fontSize: 11, textAlign: 'center', padding: 10 },
-  dismantle: { position: 'absolute', right: 56, top: 14, backgroundColor: palette.redDeep, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 4, borderWidth: 1, borderColor: '#fff5' },
-  dismantleText: { color: '#fff', fontSize: 14, fontWeight: '900' },
 });

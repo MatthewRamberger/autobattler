@@ -359,7 +359,7 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
           maxMana: stats.maxMana, manaRegen: stats.manaRegen,
           element: stats.element, resistance: stats.resistance,
           position: pos, icon: hero.icon, portraitSeed: hero.portraitSeed,
-          stars: hero.stars, abilityId: hero.abilityId,
+          stars: 0, abilityId: hero.abilityId,
         });
         u.mana = Math.min(u.maxMana, u.mana + sanctumMana);
         return [u];

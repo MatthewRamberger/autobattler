@@ -5,15 +5,14 @@ import {
   EnemyConfig, LevelProgressEntry,
 } from '../types';
 import { HEROES } from '../data/heroes';
-import { EQUIPMENT, EQUIPMENT_SETS, MAX_FORGE_LEVEL, forgeShardsRequired } from '../data/equipment';
+import { EQUIPMENT, EQUIPMENT_SETS, MAX_ITEM_TIER, ITEMS_PER_COMBINE, itemTierFactor } from '../data/equipment';
 import { ACHIEVEMENTS } from '../data/achievements';
 import { ABILITIES } from '../data/abilities';
 import { rollDailyQuests } from '../data/dailyQuests';
 import { applyTalentBonuses, availableTalentTier, TALENTS } from '../data/talents';
 import { computeMilestoneBonuses } from '../data/milestones';
 import {
-  STRONGHOLD_BUILDINGS, strongholdGoldMultiplier, strongholdExpMultiplier,
-  strongholdShardBonus,
+  STRONGHOLD_BUILDINGS, strongholdGoldMultiplier, strongholdGearDropBonus,
 } from '../data/stronghold';
 import {
   HEX_COLS, HEX_ROWS, PLAYER_MAX_COL, ENEMY_MIN_COL,
@@ -32,61 +31,32 @@ function currentMaxHeroes(state: { currentLevelId: number | null }): number {
   return level?.maxHeroes ?? gridForLevel(level ?? null).maxHeroes;
 }
 
-const SAVE_KEY = '@autobattler/save_v2';
+// Save key bumped to v3 when the hero/equipment leveling system was
+// overhauled from XP/forge to the tier+card-combine model. Old v2 saves
+// (which had level 1..50, stars, rank and shards) are ignored — players
+// start fresh under the new schema.
+const SAVE_KEY = '@autobattler/save_v3';
 
-// Hero growth caps. Players who already exceeded these (from the old
-// uncapped formula) get rebased on hydrate — see `rebaseHero` below.
-export const MAX_HERO_LEVEL = 50;
-export const MAX_HERO_STARS = 5;
-export const MAX_HERO_RANK = 5;
+// Hero progression: a hero's "tier" is `level` (1..5). The ONLY way to
+// advance a tier is to combine 4 duplicate cards. Each combine consumes 4
+// cards. The hero card count also drives how many copies you can deploy
+// in one battle, so combining trades quantity for power.
+export const MAX_HERO_TIER = 5;
+export const CARDS_PER_COMBINE = 4;
+// Per-tier (above tier 1) stat multipliers, applied in getHeroEffectiveStats.
+// Tier 5 ≈ HP × 3.32, ATK/DEF × 2.44, +10% crit, +20 mana.
+const TIER_HP_BOOST = 0.35;
+const TIER_ATK_BOOST = 0.25;
+const TIER_DEF_BOOST = 0.25;
+const TIER_CRIT_BONUS = 0.025;
+const TIER_MANA_BONUS = 5;
 
-// Card economy. A hero is leveled up by collecting duplicate cards and
-// combining them. `cardsForRank` is how many cards a rank-up consumes;
-// combining always leaves at least one card so the hero stays deployable.
-// `RANK_BOOST` is the per-rank flat stat multiplier applied in
-// getHeroEffectiveStats.
-export const RANK_BOOST = 0.12;
-export function cardsForRank(rank: number): number {
-  return rank + 2; // 0→1: 2, 1→2: 3, … 4→5: 6
-}
-// Total deployable copies of a hero on one battlefield.
+// Total deployable copies of a hero on one battlefield. An unlocked hero
+// can always field at least 1 copy even after combining away all their
+// cards.
 export function deployableCopies(unlocked: boolean, cards: number): number {
   if (!unlocked) return 0;
   return Math.max(1, cards);
-}
-// Per-level stat multiplier — used by both XP and gold-spent levelups.
-const LEVEL_BOOST = 1.05;
-// Per-star ascension boost.
-const ASCEND_HP_BOOST = 1.15;
-const ASCEND_ATK_BOOST = 1.10;
-
-// Reconstruct a hero's baseStats from the canonical source stats plus their
-// current level and star count, using the live growth formula. Used by the
-// hydrate-time migration to retroactively cap heroes that were trained
-// under the old (much steeper) growth curve.
-function rebaseBaseStats(
-  source: import('./../types').Hero['baseStats'],
-  level: number,
-  stars: number,
-): import('./../types').Hero['baseStats'] {
-  const lvlMul = Math.pow(LEVEL_BOOST, Math.max(0, level - 1));
-  const hpMul = lvlMul * Math.pow(ASCEND_HP_BOOST, stars);
-  const adMul = lvlMul * Math.pow(ASCEND_ATK_BOOST, stars);
-  return {
-    ...source,
-    maxHp: Math.round(source.maxHp * hpMul),
-    attack: Math.round(source.attack * adMul),
-    defense: Math.round(source.defense * adMul),
-    critRate: Math.min(0.5, source.critRate + Math.max(0, level - 1) * 0.0025 + stars * 0.015),
-    critDamage: source.critDamage,
-    speed: source.speed,
-    range: source.range,
-    dodge: source.dodge,
-    maxMana: source.maxMana + Math.max(0, level - 1) + stars * 2,
-    manaRegen: source.manaRegen,
-    element: source.element,
-    resistance: { ...source.resistance },
-  };
 }
 
 // A single mystery-chest payout: gear, hero cards and currency.
@@ -102,13 +72,11 @@ interface GameStore extends GameState {
   setScreen: (screen: string) => void;
 
   selectHero: (id: string | null) => void;
-  levelUpHero: (heroId: string) => void;
-  ascendHero: (heroId: string) => void;
   toggleFavorite: (heroId: string) => void;
   equipItem: (heroId: string, equipmentId: string) => void;
   unequipItem: (heroId: string, slot: 'weapon' | 'armor' | 'accessory') => void;
 
-  // Hero card system.
+  // Hero card system. The ONLY way to level a hero is to combine 4 cards.
   grantHeroCards: (heroId: string, qty: number) => void;
   combineHeroCards: (heroId: string) => void;
 
@@ -131,7 +99,8 @@ interface GameStore extends GameState {
 
   unlockHero: (heroId: string, cost: number) => void;
 
-  forgeEquipment: (id: string) => void;
+  // Equipment combine: 4 owned copies → 1 copy at the next tier.
+  combineEquipment: (id: string) => void;
   buyShopItem: (slotIdx: number) => void;
   refreshShop: (force?: boolean) => void;
 
@@ -164,9 +133,6 @@ interface GameStore extends GameState {
   // Talents: reset all picks for a hero (costs gems).
   respecTalents: (heroId: string) => void;
 
-  // Equipment dismantle: convert N copies of an item into shards.
-  dismantleEquipment: (id: string, qty: number) => void;
-
   // Stronghold building upgrades.
   upgradeStronghold: (buildingId: string) => void;
 
@@ -188,7 +154,7 @@ interface GameStore extends GameState {
 }
 
 function buildInitialHeroes(): Record<string, Hero> {
-  return Object.fromEntries(HEROES.map((h) => [h.id, { ...h, rank: 0, baseStats: { ...h.baseStats, resistance: { ...h.baseStats.resistance } } }]));
+  return Object.fromEntries(HEROES.map((h) => [h.id, { ...h, baseStats: { ...h.baseStats, resistance: { ...h.baseStats.resistance } } }]));
 }
 
 // Each hero that starts unlocked owns a single card.
@@ -257,16 +223,11 @@ function generateShop(): ShopItem[] {
       stock: 1,
     });
   }
-  // Always include a gem-cost mythic item & a gems-for-gold deal.
+  // Always include a gem-cost mythic item.
   pool.push({
     id: 'slot_gem',
     itemId: 'sword_mythic',
     cost: 100, currency: 'gems', stock: 1, label: 'Mythic Weapon (rotating)',
-  });
-  pool.push({
-    id: 'slot_shards',
-    itemId: 'shards:sword_legendary',
-    cost: 30, currency: 'gems', stock: 5, label: '5 Legendary Shards',
   });
   return pool;
 }
@@ -277,67 +238,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setScreen: (screen) => set({ currentScreen: screen }),
   selectHero: (id) => set({ selectedHeroId: id }),
-
-  levelUpHero: (heroId) => {
-    const state = get();
-    const { heroes, gold, dailyQuestProgress } = state;
-    const hero = heroes[heroId];
-    if (!hero) return;
-    if (hero.level >= MAX_HERO_LEVEL) return;
-    const cost = hero.level * 50;
-    if (gold < cost) return;
-    const newLevel = hero.level + 1;
-    const dq = dailyQuestProgress.daily_levelup ?? { progress: 0, claimed: false };
-    set({
-      gold: gold - cost,
-      heroes: {
-        ...heroes,
-        [heroId]: {
-          ...hero,
-          level: newLevel,
-          experience: 0,
-          experienceToNext: Math.round(100 * Math.pow(1.3, newLevel)),
-          baseStats: {
-            ...hero.baseStats,
-            maxHp: Math.round(hero.baseStats.maxHp * LEVEL_BOOST),
-            attack: Math.round(hero.baseStats.attack * LEVEL_BOOST),
-            defense: Math.round(hero.baseStats.defense * LEVEL_BOOST),
-            critRate: Math.min(0.5, hero.baseStats.critRate + 0.003),
-            maxMana: hero.baseStats.maxMana + 1,
-          },
-        },
-      },
-      dailyQuestProgress: { ...dailyQuestProgress, daily_levelup: { ...dq, progress: dq.progress + 1 } },
-    });
-    persist(get());
-  },
-
-  ascendHero: (heroId) => {
-    const { heroes, gems } = get();
-    const hero = heroes[heroId];
-    if (!hero) return;
-    if (hero.stars >= MAX_HERO_STARS) return;
-    const cost = (hero.stars + 1) * 30;
-    if (gems < cost) return;
-    set({
-      gems: gems - cost,
-      heroes: {
-        ...heroes,
-        [heroId]: {
-          ...hero,
-          stars: hero.stars + 1,
-          baseStats: {
-            ...hero.baseStats,
-            maxHp: Math.round(hero.baseStats.maxHp * ASCEND_HP_BOOST),
-            attack: Math.round(hero.baseStats.attack * ASCEND_ATK_BOOST),
-            defense: Math.round(hero.baseStats.defense * ASCEND_ATK_BOOST),
-            critRate: Math.min(0.5, hero.baseStats.critRate + 0.015),
-          },
-        },
-      },
-    });
-    persist(get());
-  },
 
   toggleFavorite: (heroId) => {
     const { heroes } = get();
@@ -408,15 +308,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const state = get();
     const hero = state.heroes[heroId];
     if (!hero) return;
-    const rank = hero.rank ?? 0;
-    if (rank >= MAX_HERO_RANK) return;
-    const need = cardsForRank(rank);
+    if (hero.level >= MAX_HERO_TIER) return;
     const have = state.heroCards[heroId] ?? 0;
-    // Combining always leaves one card behind so the hero stays deployable.
-    if (have < need + 1) return;
+    if (have < CARDS_PER_COMBINE) return;
+    const dq = state.dailyQuestProgress.daily_levelup ?? { progress: 0, claimed: false };
     set({
-      heroCards: { ...state.heroCards, [heroId]: have - need },
-      heroes: { ...state.heroes, [heroId]: { ...hero, rank: rank + 1 } },
+      heroCards: { ...state.heroCards, [heroId]: have - CARDS_PER_COMBINE },
+      heroes: { ...state.heroes, [heroId]: { ...hero, level: hero.level + 1 } },
+      dailyQuestProgress: {
+        ...state.dailyQuestProgress,
+        daily_levelup: { ...dq, progress: dq.progress + 1 },
+      },
     });
     persist(get());
   },
@@ -538,33 +440,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const killsPerHero = heroIds.length > 0 ? Math.floor(stats.kills / heroIds.length) : 0;
     const extraKills = heroIds.length > 0 ? stats.kills - killsPerHero * heroIds.length : 0;
     let extraIdx = 0;
-    const expMul = strongholdExpMultiplier(state.stronghold);
-    const adjustedExp = Math.round(exp * expMul);
     for (const heroId of heroIds) {
       const hero = updatedHeroes[heroId];
       if (!hero) continue;
-      let newExp = hero.experience + adjustedExp;
-      let lvl = hero.level;
-      let expNext = hero.experienceToNext;
-      let baseStats = hero.baseStats;
-      while (newExp >= expNext && lvl < MAX_HERO_LEVEL) {
-        newExp -= expNext;
-        lvl += 1;
-        expNext = Math.round(100 * Math.pow(1.3, lvl));
-        baseStats = {
-          ...baseStats,
-          maxHp: Math.round(baseStats.maxHp * LEVEL_BOOST),
-          attack: Math.round(baseStats.attack * LEVEL_BOOST),
-          defense: Math.round(baseStats.defense * LEVEL_BOOST),
-          critRate: Math.min(0.5, baseStats.critRate + 0.002),
-          maxMana: baseStats.maxMana + 1,
-        };
-      }
-      // XP gained past the cap is discarded so the bar stops filling.
-      if (lvl >= MAX_HERO_LEVEL) { newExp = 0; expNext = 1; }
       const myKills = killsPerHero + (extraIdx++ < extraKills ? 1 : 0);
       updatedHeroes[heroId] = {
-        ...hero, level: lvl, experience: newExp, experienceToNext: expNext, baseStats,
+        ...hero,
         battlesUsed: (hero.battlesUsed ?? 0) + 1,
         kills: (hero.kills ?? 0) + myKills,
       };
@@ -577,21 +458,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
         owned: updatedEquipment[itemDrop].owned + 1,
       };
     }
-    // Random shards drop for a couple of items when winning.
+    // Extra random gear drops on a victory — feeds the combine economy.
     if (won) {
       const ids = Object.keys(updatedEquipment);
-      const dropCount = 2 + Math.floor(Math.random() * 2);
-      const bonusShards = strongholdShardBonus(state.stronghold);
+      const bonus = strongholdGearDropBonus(state.stronghold);
+      const dropCount = (Math.random() < (0.5 + bonus) ? 1 : 0) + (Math.random() < (0.25 + bonus) ? 1 : 0);
       for (let i = 0; i < dropCount; i++) {
         const id = ids[Math.floor(Math.random() * ids.length)];
         const eq = updatedEquipment[id];
         if (!eq) continue;
-        updatedEquipment[id] = { ...eq, shards: eq.shards + (1 + Math.floor(Math.random() * 3)) + bonusShards };
+        updatedEquipment[id] = { ...eq, owned: eq.owned + 1 };
       }
     }
 
     // Hero card drop — winning often yields a card for a random owned hero,
-    // feeding the rank-up / multi-deploy economy.
+    // feeding the combine / multi-deploy economy.
     let updatedHeroCards = state.heroCards;
     if (won && Math.random() < 0.55) {
       const ownedIds = Object.values(updatedHeroes).filter((h) => h.unlocked).map((h) => h.id);
@@ -698,37 +579,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
     persist(get());
   },
 
-  forgeEquipment: (id) => {
-    const { equipment, gold } = get();
+  combineEquipment: (id) => {
+    const { equipment } = get();
     const item = equipment[id];
     if (!item) return;
-    if (item.level >= MAX_FORGE_LEVEL) return;
-    const shardCost = forgeShardsRequired(item.level);
-    const goldCost = 50 * (item.level + 1);
-    if (item.shards < shardCost || gold < goldCost) return;
-    const newLevel = item.level + 1;
-    const factor = 1 + 0.2 * newLevel;
+    if (item.level >= MAX_ITEM_TIER) return;
+    if (item.owned < ITEMS_PER_COMBINE) return;
+    const newTier = item.level + 1;
+    // Scale stat bonuses by the new tier multiplier, backing out the old one.
+    const oldFactor = itemTierFactor(item.level);
+    const newFactor = itemTierFactor(newTier);
+    const ratio = newFactor / oldFactor;
     const newStatBonus: Equipment['statBonus'] = {};
     for (const [k, v] of Object.entries(item.statBonus)) {
-      const base = (item.statBonus as any)[k] / (1 + 0.2 * item.level);
-      (newStatBonus as any)[k] = typeof v === 'number'
-        ? (Number.isInteger(base) ? Math.round(base * factor) : +(base * factor).toFixed(2))
-        : v;
+      if (typeof v !== 'number') { (newStatBonus as any)[k] = v; continue; }
+      const scaled = v * ratio;
+      (newStatBonus as any)[k] = Number.isInteger(v) ? Math.round(scaled) : +scaled.toFixed(2);
     }
     const dq = get().dailyQuestProgress.daily_forge ?? { progress: 0, claimed: false };
     set({
-      gold: gold - goldCost,
       equipment: {
         ...equipment,
-        [id]: { ...item, level: newLevel, shards: item.shards - shardCost, statBonus: newStatBonus },
+        // Consume the 4 copies (combine destroys all 4, the item itself is
+        // upgraded to the next tier). Net: owned -= 4, tier += 1.
+        [id]: { ...item, level: newTier, owned: item.owned - ITEMS_PER_COMBINE, statBonus: newStatBonus },
       },
       dailyQuestProgress: {
         ...get().dailyQuestProgress,
         daily_forge: { ...dq, progress: dq.progress + 1 },
       },
     });
-    // Achievement
-    if (newLevel === 5) {
+    if (newTier === MAX_ITEM_TIER) {
       const ach = { ...get().achievements };
       ach.forge_5 = { progress: 1, claimed: ach.forge_5?.claimed ?? false };
       set({ achievements: ach });
@@ -744,16 +625,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (wallet < item.cost) return;
 
     let updatedEquipment = { ...state.equipment };
-
-    if (item.itemId.startsWith('shards:')) {
-      const targetId = item.itemId.split(':')[1];
-      if (updatedEquipment[targetId]) {
-        updatedEquipment[targetId] = { ...updatedEquipment[targetId], shards: updatedEquipment[targetId].shards + 5 };
-      }
-    } else {
-      const eq = updatedEquipment[item.itemId];
-      if (eq) updatedEquipment[item.itemId] = { ...eq, owned: eq.owned + 1 };
-    }
+    const eq = updatedEquipment[item.itemId];
+    if (eq) updatedEquipment[item.itemId] = { ...eq, owned: eq.owned + 1 };
 
     const newStock = state.shopStock.map((s, i) => i === slotIdx ? { ...s, stock: s.stock - 1 } : s);
     set({
@@ -879,7 +752,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           maxMana: stats.maxMana, manaRegen: stats.manaRegen,
           element: stats.element, resistance: stats.resistance,
           position: state.placedHeroes[key], icon: hero.icon, portraitSeed: hero.portraitSeed,
-          stars: hero.stars, abilityId: hero.abilityId,
+          stars: 0, abilityId: hero.abilityId,
         });
       });
       const enemyUnits = level.enemies.map((e, idx) => buildEnemyUnit({
@@ -960,7 +833,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           maxMana: stats.maxMana, manaRegen: stats.manaRegen,
           element: stats.element, resistance: stats.resistance,
           position: state.placedHeroes[key], icon: hero.icon, portraitSeed: hero.portraitSeed,
-          stars: hero.stars, abilityId: hero.abilityId,
+          stars: 0, abilityId: hero.abilityId,
         });
       });
       const enemyUnits = level.enemies.map((e, idx) => buildEnemyUnit({
@@ -1122,24 +995,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       gems: state.gems - cost,
       heroes: { ...state.heroes, [heroId]: { ...hero, talentChoices: [-1, -1, -1, -1] } },
-    });
-    persist(get());
-  },
-
-  dismantleEquipment: (id, qty) => {
-    const state = get();
-    const item = state.equipment[id];
-    if (!item || item.owned < qty || qty <= 0) return;
-    // Yield depends on rarity.
-    const rarityYield: Record<string, number> = {
-      common: 1, rare: 3, epic: 8, legendary: 20, mythic: 50,
-    };
-    const shards = (rarityYield[item.rarity] ?? 1) * qty;
-    set({
-      equipment: {
-        ...state.equipment,
-        [id]: { ...item, owned: item.owned - qty, shards: item.shards + shards },
-      },
     });
     persist(get());
   },
@@ -1317,42 +1172,32 @@ export const useGameStore = create<GameStore>((set, get) => ({
         // Merge with current data files (so new heroes/equipment appear).
         const heroes = { ...buildInitialHeroes() };
         for (const id in heroes) {
-          if (parsed.heroes && parsed.heroes[id]) {
-            heroes[id] = { ...heroes[id], ...parsed.heroes[id] };
-          }
-        }
-        // Rebase: clamp level/stars and recompute baseStats from the
-        // canonical hero data using the current growth formula. This
-        // retroactively shrinks heroes inflated by the old 1.08-1.12 boosts.
-        const sourceHeroes = Object.fromEntries(HEROES.map((h) => [h.id, h]));
-        for (const id in heroes) {
-          const source = sourceHeroes[id];
-          if (!source) continue;
-          const lvl = Math.max(1, Math.min(MAX_HERO_LEVEL, heroes[id].level));
-          const stars = Math.max(0, Math.min(MAX_HERO_STARS, heroes[id].stars));
+          const saved = parsed.heroes?.[id];
+          if (!saved) continue;
           heroes[id] = {
             ...heroes[id],
-            level: lvl,
-            stars,
-            rank: Math.max(0, Math.min(MAX_HERO_RANK, heroes[id].rank ?? 0)),
-            baseStats: rebaseBaseStats(source.baseStats, lvl, stars),
-            experience: lvl >= MAX_HERO_LEVEL ? 0 : heroes[id].experience,
-            experienceToNext: lvl >= MAX_HERO_LEVEL ? 1 : Math.round(100 * Math.pow(1.3, lvl)),
+            ...saved,
+            // Clamp tier into the 1..5 range. baseStats stay at canonical
+            // author data; stat scaling is applied in getHeroEffectiveStats.
+            level: Math.max(1, Math.min(MAX_HERO_TIER, saved.level ?? 1)),
+            baseStats: { ...heroes[id].baseStats },
           };
         }
-        // Hero cards: every owned hero keeps at least one card; saved counts
-        // win when present. Old saves predate the card economy entirely.
         const heroCards: Record<string, number> = {};
         for (const id in heroes) {
-          const saved = parsed.heroCards?.[id];
-          if (typeof saved === 'number' && saved > 0) heroCards[id] = saved;
+          const savedCards = parsed.heroCards?.[id];
+          if (typeof savedCards === 'number' && savedCards > 0) heroCards[id] = savedCards;
           else if (heroes[id].unlocked) heroCards[id] = 1;
         }
         const equipment = { ...buildInitialEquipment() };
         for (const id in equipment) {
-          if (parsed.equipment && parsed.equipment[id]) {
-            equipment[id] = { ...equipment[id], ...parsed.equipment[id] };
-          }
+          const savedEq = parsed.equipment?.[id];
+          if (!savedEq) continue;
+          equipment[id] = {
+            ...equipment[id],
+            ...savedEq,
+            level: Math.max(1, Math.min(MAX_ITEM_TIER, savedEq.level ?? 1)),
+          };
         }
         const achievements = { ...buildInitialAchievements(), ...(parsed.achievements ?? {}) };
         // Hex grid migration: saves from the old 10×3 layout used cols 0..4
@@ -1487,26 +1332,27 @@ export function getHeroEffectiveStats(heroId: string, store: GameStore): Effecti
     }
   }
 
-  // Star multiplier is intentionally small — the bulk of the per-star
-  // boost is folded into baseStats during ascendHero / hydrate rebase.
-  // Rank (from combining hero cards) grants a flat per-rank multiplier on
-  // top, applied to HP / ATK / DEF.
-  const starMul = 1 + hero.stars * 0.03;
-  const rankMul = 1 + (hero.rank ?? 0) * RANK_BOOST;
-  const coreMul = starMul * rankMul;
+  // Tier-based stat scaling. Tier 1 = base (no boost). Each combine boosts
+  // HP/ATK/DEF/crit/mana. baseStats stay at the canonical author values.
+  const t = Math.max(0, (hero.level ?? 1) - 1);
+  const hpMul = Math.pow(1 + TIER_HP_BOOST, t);
+  const atkMul = Math.pow(1 + TIER_ATK_BOOST, t);
+  const defMul = Math.pow(1 + TIER_DEF_BOOST, t);
+  const tierCrit = t * TIER_CRIT_BONUS;
+  const tierMana = t * TIER_MANA_BONUS;
   const mile = computeMilestoneBonuses(hero.kills ?? 0, hero.battlesUsed ?? 0);
 
   const pre: HeroStats = {
-    hp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * coreMul),
-    maxHp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * coreMul),
-    attack: Math.round((hero.baseStats.attack + sumBonus('attack') + setAttack + mile.attack) * coreMul),
-    defense: Math.round((hero.baseStats.defense + sumBonus('defense') + setDefense + mile.defense) * coreMul),
+    hp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * hpMul),
+    maxHp: Math.round((hero.baseStats.maxHp + sumBonus('hp') + setHp + mile.hp) * hpMul),
+    attack: Math.round((hero.baseStats.attack + sumBonus('attack') + setAttack + mile.attack) * atkMul),
+    defense: Math.round((hero.baseStats.defense + sumBonus('defense') + setDefense + mile.defense) * defMul),
     speed: hero.baseStats.speed + sumBonus('speed'),
     range: hero.baseStats.range,
-    critRate: Math.min(0.85, hero.baseStats.critRate + sumBonus('critRate') + setCrit + mile.critRate),
+    critRate: Math.min(0.85, hero.baseStats.critRate + sumBonus('critRate') + setCrit + mile.critRate + tierCrit),
     critDamage: hero.baseStats.critDamage + sumBonus('critDamage'),
     dodge: Math.min(0.6, hero.baseStats.dodge + sumBonus('dodge') + setDodge),
-    maxMana: hero.baseStats.maxMana + sumBonus('maxMana'),
+    maxMana: hero.baseStats.maxMana + sumBonus('maxMana') + tierMana,
     manaRegen: hero.baseStats.manaRegen + sumBonus('manaRegen'),
     element: hero.baseStats.element,
     resistance: hero.baseStats.resistance,

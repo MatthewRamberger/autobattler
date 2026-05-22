@@ -12,10 +12,10 @@ export interface Talent {
 }
 
 /**
- * Talent picks: at hero level 5/10/15/20 the player chooses between
+ * Talent picks: when a hero reaches tier 2/3/4/5 the player chooses between
  * 2 options per tier. Index of the picked talent stored in Hero.talentChoices.
  */
-export const TALENT_UNLOCK_LEVELS = [5, 10, 15, 20];
+export const TALENT_UNLOCK_LEVELS = [2, 3, 4, 5];
 
 // Each class has 4 tiers, each tier has 2 options.
 export const TALENTS: Record<HeroClass, Talent[][]> = {
@@ -201,11 +201,12 @@ export const TALENTS: Record<HeroClass, Talent[][]> = {
   ],
 };
 
-export function availableTalentTier(level: number): number {
-  // Return how many tiers are unlocked (0..4).
+export function availableTalentTier(tier: number): number {
+  // Return how many talent tiers are unlocked (0..4) for a hero at the
+  // given hero tier (1..5).
   let unlocked = 0;
   for (const req of TALENT_UNLOCK_LEVELS) {
-    if (level >= req) unlocked++;
+    if (tier >= req) unlocked++;
   }
   return unlocked;
 }
@@ -213,12 +214,12 @@ export function availableTalentTier(level: number): number {
 export function applyTalentBonuses(
   heroClass: HeroClass,
   choices: number[] | undefined,
-  level: number,
+  tier: number,
   stats: HeroStats,
 ): HeroStats {
   if (!choices) return stats;
   const tiers = TALENTS[heroClass] ?? [];
-  const unlocked = availableTalentTier(level);
+  const unlocked = availableTalentTier(tier);
   const out: any = { ...stats };
   for (let tier = 0; tier < unlocked; tier++) {
     const choice = choices[tier];

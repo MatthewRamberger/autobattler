@@ -144,7 +144,7 @@ export default function BattlePrepScreen() {
           )}
           {placedHero ? (
             <MiniUnitPortrait icon={placedHero.icon} heroClass={placedHero.heroClass}
-              isPlayer size={spriteH} stars={placedHero.stars} />
+              isPlayer size={spriteH} stars={0} />
           ) : enemyHere ? (
             <MiniUnitPortrait icon={enemyHere.icon} heroClass={enemyHere.heroClass}
               isPlayer={false} size={spriteH} stars={enemyHere.stars} />
@@ -264,7 +264,7 @@ export default function BattlePrepScreen() {
               >
                 <HeroPortrait size={54} heroClass={hero.heroClass} rarity={hero.rarity} icon={hero.icon}
                   element={hero.baseStats.element} seed={hero.portraitSeed} level={hero.level}
-                  stars={hero.stars} selected={sel} />
+                  selected={sel} />
                 <Text style={styles.benchName} numberOfLines={1}>{hero.name}</Text>
                 <View style={styles.benchRow}>
                   {stats && <Text style={styles.benchPower}>⚡{stats.power}</Text>}

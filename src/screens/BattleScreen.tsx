@@ -246,7 +246,6 @@ export default function BattleScreen() {
 
                 <Plate style={styles.rewards}>
                   <Text style={styles.reward}>🪙  +{result.gold} Gold</Text>
-                  <Text style={styles.reward}>⭐  +{result.exp} XP</Text>
                   {result.won && <Text style={styles.reward}>💎  +2 Gems</Text>}
                   {result.drop && <Text style={[styles.reward, { color: palette.gold }]}>🎁  Item dropped!</Text>}
                 </Plate>

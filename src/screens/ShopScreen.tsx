@@ -19,9 +19,7 @@ export default function ShopScreen() {
         {shopStock.length === 0 ? (
           <Text style={styles.empty}>The shop is empty. Try refreshing.</Text>
         ) : shopStock.map((slot, idx) => {
-          const isShard = slot.itemId.startsWith('shards:');
-          const targetId = isShard ? slot.itemId.split(':')[1] : slot.itemId;
-          const item = equipment[targetId];
+          const item = equipment[slot.itemId];
           if (!item) return null;
           const sold = slot.stock <= 0;
           const canAfford = slot.currency === 'gold' ? gold >= slot.cost : gems >= slot.cost;
@@ -34,7 +32,7 @@ export default function ShopScreen() {
                 </LinearGradient>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.name, { color: grad[0] }]} numberOfLines={1}>
-                    {isShard ? `5× ${item.name} Shards` : item.name}
+                    {slot.label ?? item.name}
                   </Text>
                   <Text style={styles.bonus} numberOfLines={1}>
                     {Object.entries(item.statBonus).map(([k, v]) => `+${v} ${k}`).join(' · ')}

@@ -6,9 +6,8 @@ function mk(eq: Partial<Equipment> & {
   statBonus: Equipment['statBonus'];
 }): Equipment {
   return {
-    level: 0,
+    level: 1,
     owned: 0,
-    shards: 0,
     ...eq,
   } as Equipment;
 }
@@ -107,12 +106,13 @@ export const RARITY_GLOW: Record<string, string> = {
   mythic: '#e84393dd',
 };
 
-// Forge: combine shards/duplicates to upgrade level (max 5).
-// Each forge level adds +20% to the item's statBonus (rounded).
-export const MAX_FORGE_LEVEL = 5;
-export function forgeShardsRequired(level: number): number {
-  // level here is the *current* level you're upgrading from
-  return 5 + level * 5;
+// Tier system: combine 4 identical copies (consume 4, keep 1 representative)
+// to advance to the next tier. Each tier adds +20% to the item's statBonus.
+export const MAX_ITEM_TIER = 5;
+export const ITEMS_PER_COMBINE = 4;
+// Multiplier applied to the canonical statBonus at a given tier (1..5).
+export function itemTierFactor(tier: number): number {
+  return 1 + 0.2 * Math.max(0, tier - 1);
 }
 
 export interface EquipmentSet {
