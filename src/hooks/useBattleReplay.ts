@@ -126,14 +126,38 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
 
   // ---- one-time battle setup -------------------------------------------------
   useEffect(() => {
+    // Reset every ref to fresh-battle defaults. This matters in React Strict
+    // Mode's dev double-invocation: refs persist across the simulated
+    // unmount → remount, so without explicit resets here `done.current`
+    // from the first invocation would still be true on the second, and the
+    // replay loop would bail forever (no events processed, no log entries,
+    // no movement — exactly the bug pattern users were seeing).
     mounted.current = true;
+    done.current = false;
+    paused.current = false;
+    evIdx.current = 0;
+    tickRef.current = 0;
+    anims.current = new Map();
+    events.current = [];
+    logs.current = [];
+    finalUnits.current = [];
+    safeSet(setPhase, 'running');
+    safeSet(setTick, 0);
+    safeSet(setLog, []);
+    safeSet(setVfx, []);
+    safeSet(setProjectiles, []);
+    safeSet(setResult, null);
+
     try {
       const enemyCfg = level ? level.enemies : generateArenaWave(arenaWave);
       const enemyUnits = enemyCfg.map((e, idx) => buildEnemyUnit({
         name: e.name, heroClass: e.heroClass, level: e.level, position: e.position,
         icon: e.icon, index: idx, element: e.element, stars: e.stars, abilityId: e.abilityId,
       }));
-      const sanctumMana = (store.stronghold['sanctum'] ?? 0) * 8;
+      // Defensive: store.stronghold / store.settings may be missing from
+      // very old saves where these fields didn't yet exist.
+      const stronghold = (store.stronghold ?? {}) as Record<string, number>;
+      const sanctumMana = (stronghold['sanctum'] ?? 0) * 8;
       const playerUnits = Object.entries(placedHeroes).flatMap(([heroId, pos]) => {
         const hero = heroes[heroId];
         const stats = getHeroEffectiveStats(heroId, store);
@@ -172,9 +196,13 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       anims.current = map;
       setUnits(all.map((u) => ({ ...u, position: { ...u.position } })));
     } catch (err) {
-      // Never let setup throw into render — show an immediate (empty) finish.
+      // Surface the failure: console + a visible combat-log entry so
+      // we can actually see what blew up on device (console.warn is
+      // invisible without a debugger).
       // eslint-disable-next-line no-console
       console.warn('[battle] setup failed', err);
+      const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      safeSet(setLog, [{ tick: 0, type: 'system' as const, text: `⚠ Battle setup failed — ${msg}` }]);
       finish();
     }
     return () => {
@@ -235,8 +263,9 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
   // Pure data reduce; animation side-effects queued and flushed after commit.
   function applyEvents(batch: BattleEvent[]) {
     const map = anims.current;
-    const particles = store.settings.particles;
-    const reduce = store.settings.reduceMotion;
+    // Defensive: settings may be missing from old saves.
+    const particles = store.settings?.particles ?? true;
+    const reduce = store.settings?.reduceMotion ?? false;
     const fx: Array<() => void> = [];
     const float = (id: string, text: string, color: string, fontSize?: number, crit?: boolean) => {
       if (!particles) return;
