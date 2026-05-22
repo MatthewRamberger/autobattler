@@ -1,211 +1,210 @@
 import React from 'react';
-import { View, StyleSheet, Text } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { HexLayout, hexCenter, inBounds } from '../../utils/hex';
-import { palette } from '../../theme';
 import { MapTheme, Obstacle, ObstacleKind } from '../../types';
 
-// A hex-tiled arena rebuilt from scratch for a polished look.
+// ===========================================================================
+// Arena — a layered, level-themed battlefield.
 //
-// Layout: pointy-top hexes drawn as a CSS-triangle hex (no SVG dep) with a
-// stacked rim of three gradient layers — base, rim ring, inner glow — and
-// a contact shadow underneath so the whole grid sits on the field like
-// inlaid tiles rather than a flat shaded square. Halves are tinted by
-// team (subtle blue/red wash) without changing tile color radically, so
-// the eye reads the divide via lighting rather than swatch noise.
+// Rendering stack (back → front):
+//   1. Gold bevelled frame
+//   2. Themed sky gradient
+//   3. Distant horizon silhouette (mountains / treeline / walls …)
+//   4. Ground plane with directional lighting + team-side halos
+//   5. Hex tile grid (3-tone bevelled hexes, team-tinted halves)
+//   6. Glowing contested rune divider
+//   7. Level obstacle props (detailed trees, fortresses, crystals …)
+//   8. Foreground edge scenery framing the field
+//   9. Atmospheric haze + vignette
 //
-// The contested center column gets a glowing rune line instead of the old
-// `river` gradient strip — it reads as an arena divider in any theme.
-//
-// Obstacles render as layered Views (shadow base + body + highlight)
-// instead of emoji so the props match the painted-tile look.
+// Everything is plain Views + expo-linear-gradient so it stays crisp under
+// the BattleStage pinch-zoom without any native dependency.
+// ===========================================================================
+
+export const FRAME_PAD = 8;
+
+type SceneryKind = 'hills' | 'pines' | 'ruins' | 'peaks' | 'volcano' | 'spires' | 'clouds' | 'graves' | 'walls';
 
 interface ThemeStyle {
-  // Sky / ground gradients for the field background. `bgMid` adds a third
-  // gradient stop so we can fake distant atmosphere.
-  bg: readonly [string, string, string];
-
-  // Hex tile palette: deep shadow underneath, mid body, light highlight.
-  tile: { shadow: string; mid: string; hi: string; rim: string };
-  // Team wash overlays — kept very subtle so the field reads as one space.
-  playerWash: string;   // ~ #...22
+  sky: readonly [string, string, string];
+  ground: readonly [string, string];
+  tile: { hi: string; mid: string; low: string; shadow: string; rim: string };
+  playerWash: string;
   enemyWash: string;
-
-  // Center rune divider.
   rune: readonly [string, string];
-
-  // Ambient haze tint for foggy / hot themes.
+  horizon: { kind: SceneryKind; far: string; near: string };
   haze?: string;
-
-  // Decorative corner emblems (still emoji — these are small and far enough
-  // to read as themed flourishes rather than primary art).
-  cornerLeft: string;
-  cornerRight: string;
-
-  // Edge-of-field glow tint (a halo around the field rectangle).
   edgeGlow: string;
 }
 
-// Color reference: deeper saturated colors so the field looks painted, not
-// washed-out. Highlights are warm so gold ornaments harmonize.
 const THEMES: Record<MapTheme, ThemeStyle> = {
   plains: {
-    bg: ['#2f4624', '#1d2c16', '#0d160a'],
-    tile: { shadow: '#0e1a07', mid: '#4a6a32', hi: '#7ab156', rim: '#9fcd6d' },
-    playerWash: '#3da4ff18', enemyWash: '#ff6a5518',
-    rune: ['#ffe07a', '#d29a1c'],
-    cornerLeft: '🌾', cornerRight: '🌾',
-    edgeGlow: '#5a8a3a55',
+    sky: ['#8fb6e0', '#6b94c8', '#3f5e80'],
+    ground: ['#4a6a32', '#2b3f1d'],
+    tile: { hi: '#9fd069', mid: '#5d8a3c', low: '#3c5a26', shadow: '#16240d', rim: '#bce08a' },
+    playerWash: '#3da4ff20', enemyWash: '#ff6a5520',
+    rune: ['#ffe488', '#d29a1c'],
+    horizon: { kind: 'hills', far: '#4a6a8a', near: '#2f4a2a' },
+    edgeGlow: '#5a8a3a66',
   },
   forest: {
-    bg: ['#13301a', '#0a1d0e', '#040b06'],
-    tile: { shadow: '#04140a', mid: '#244c2a', hi: '#3c8a45', rim: '#69bf6f' },
-    playerWash: '#3da4ff15', enemyWash: '#ff5a5a18',
+    sky: ['#3a5a52', '#274038', '#142420'],
+    ground: ['#244c2a', '#10260f'],
+    tile: { hi: '#62b465', mid: '#317a3a', low: '#1e4d24', shadow: '#081608', rim: '#7fce78' },
+    playerWash: '#3da4ff18', enemyWash: '#ff5a5a1c',
     rune: ['#bef07a', '#5a983a'],
-    haze: '#0a1f12aa',
-    cornerLeft: '🌲', cornerRight: '🌳',
-    edgeGlow: '#2a6a3a66',
+    horizon: { kind: 'pines', far: '#1c3526', near: '#0c1c12' },
+    haze: '#0a1f1255',
+    edgeGlow: '#2a6a3a77',
   },
   ruins: {
-    bg: ['#2f2826', '#1c1816', '#0c0a08'],
-    tile: { shadow: '#0e0a07', mid: '#5a4e44', hi: '#8c7c6a', rim: '#b59c82' },
-    playerWash: '#5fa4ff15', enemyWash: '#ff8a5a18',
+    sky: ['#caa97f', '#8c7355', '#4a3a2a'],
+    ground: ['#5a4e44', '#2a2018'],
+    tile: { hi: '#c4ad8e', mid: '#82705a', low: '#564636', shadow: '#1c140c', rim: '#dcc6a2' },
+    playerWash: '#5fa4ff18', enemyWash: '#ff8a5a1c',
     rune: ['#ffe39c', '#a87a14'],
-    cornerLeft: '🏛️', cornerRight: '🏰',
-    edgeGlow: '#8a785566',
+    horizon: { kind: 'ruins', far: '#5a4c3a', near: '#2e2418' },
+    edgeGlow: '#8a785577',
   },
   tundra: {
-    bg: ['#2c3e60', '#162234', '#08111e'],
-    tile: { shadow: '#0a1828', mid: '#4a6a92', hi: '#9bc3eb', rim: '#d9ecff' },
-    playerWash: '#3da4ff22', enemyWash: '#c5a3ff14',
-    rune: ['#bce0ff', '#5a98c8'],
-    haze: '#7ab0e022',
-    cornerLeft: '🏔️', cornerRight: '❄️',
-    edgeGlow: '#7ab0e0aa',
+    sky: ['#bcd6ee', '#86a8cc', '#41597a'],
+    ground: ['#7a96b6', '#3a4c66'],
+    tile: { hi: '#eaf5ff', mid: '#9fc2e4', low: '#6f8eb4', shadow: '#2a3d56', rim: '#ffffff' },
+    playerWash: '#3da4ff24', enemyWash: '#c5a3ff18',
+    rune: ['#cdeaff', '#5a98c8'],
+    horizon: { kind: 'peaks', far: '#8aa8c8', near: '#4a5e7e' },
+    haze: '#cfe4f733',
+    edgeGlow: '#9fd0f0aa',
   },
   inferno: {
-    bg: ['#4a1410', '#260808', '#0c0303'],
-    tile: { shadow: '#1f0805', mid: '#7a2820', hi: '#c34a2a', rim: '#ff6a3a' },
-    playerWash: '#3da4ff10', enemyWash: '#ff3a1a22',
+    sky: ['#6a2018', '#3a0e0a', '#150403'],
+    ground: ['#5a1e14', '#260808'],
+    tile: { hi: '#ff8a4a', mid: '#b84a26', low: '#7a2c18', shadow: '#1f0805', rim: '#ffb072' },
+    playerWash: '#3da4ff14', enemyWash: '#ff3a1a26',
     rune: ['#ffd24a', '#ff5a14'],
-    haze: '#ff5a2a26',
-    cornerLeft: '🌋', cornerRight: '🔥',
-    edgeGlow: '#ff5a1a88',
+    horizon: { kind: 'volcano', far: '#4a1810', near: '#240806' },
+    haze: '#ff5a2a2e',
+    edgeGlow: '#ff5a1a99',
   },
   volcanic: {
-    bg: ['#3a1410', '#1c0606', '#080202'],
-    tile: { shadow: '#1c0604', mid: '#6a2418', hi: '#a8442a', rim: '#e26a3a' },
-    playerWash: '#3da4ff10', enemyWash: '#ff5a3a22',
+    sky: ['#5a1c14', '#300c0a', '#120303'],
+    ground: ['#4a1a12', '#1c0606'],
+    tile: { hi: '#e8743a', mid: '#a8442a', low: '#6a2418', shadow: '#1c0604', rim: '#ff9456' },
+    playerWash: '#3da4ff14', enemyWash: '#ff5a3a26',
     rune: ['#ffae5a', '#c0552a'],
-    haze: '#ff8a3a22',
-    cornerLeft: '🗻', cornerRight: '🐉',
-    edgeGlow: '#ff5a1a88',
+    horizon: { kind: 'volcano', far: '#3a120c', near: '#1c0604' },
+    haze: '#ff8a3a2a',
+    edgeGlow: '#ff5a1a99',
   },
   shadow: {
-    bg: ['#241340', '#120a22', '#06030d'],
-    tile: { shadow: '#0d0719', mid: '#3a2563', hi: '#7c4ad0', rim: '#bd9eff' },
-    playerWash: '#5fa4ff14', enemyWash: '#ff3a8814',
+    sky: ['#352052', '#1e1238', '#0a0518'],
+    ground: ['#2c1a4a', '#120a26'],
+    tile: { hi: '#9a6ce8', mid: '#5a3aa0', low: '#3a2568', shadow: '#0d0719', rim: '#c6a4ff' },
+    playerWash: '#5fa4ff18', enemyWash: '#ff3a8818',
     rune: ['#cf9bff', '#5a2eb0'],
-    haze: '#6a1a8a26',
-    cornerLeft: '🌑', cornerRight: '👁️',
-    edgeGlow: '#7a3acf88',
+    horizon: { kind: 'spires', far: '#2a1850', near: '#150a2a' },
+    haze: '#6a1a8a2a',
+    edgeGlow: '#7a3acf99',
   },
   celestial: {
-    bg: ['#4e3a14', '#2c2210', '#120c05'],
-    tile: { shadow: '#1a1206', mid: '#7a5a1c', hi: '#d09a2c', rim: '#ffd95a' },
-    playerWash: '#fff2a818', enemyWash: '#ff8a5a14',
+    sky: ['#ffe9a8', '#e6b864', '#9a7430'],
+    ground: ['#6a5220', '#3a2c10'],
+    tile: { hi: '#ffe89a', mid: '#d6a63c', low: '#9a7424', shadow: '#3a2a08', rim: '#fff4c4' },
+    playerWash: '#bfe4ff20', enemyWash: '#ff8a5a18',
     rune: ['#fff2a8', '#d29a1c'],
-    haze: '#ffd24a18',
-    cornerLeft: '☀️', cornerRight: '✨',
-    edgeGlow: '#ffd24a88',
+    horizon: { kind: 'clouds', far: '#e8c878', near: '#c89a44' },
+    haze: '#ffe9a826',
+    edgeGlow: '#ffd24a99',
   },
   undead: {
-    bg: ['#1f2c2a', '#0e1716', '#040809'],
-    tile: { shadow: '#040d0c', mid: '#3a504a', hi: '#6f8a82', rim: '#a8c5bb' },
-    playerWash: '#5fa4ff12', enemyWash: '#c5a3ff14',
+    sky: ['#34504a', '#1e302c', '#0a1614'],
+    ground: ['#2e423c', '#121e1a'],
+    tile: { hi: '#86a89c', mid: '#4e6a60', low: '#33473f', shadow: '#0a1614', rim: '#a8c5bb' },
+    playerWash: '#5fa4ff16', enemyWash: '#c5a3ff18',
     rune: ['#bbe5d0', '#3a7a6a'],
-    haze: '#5a7a6a26',
-    cornerLeft: '⚰️', cornerRight: '💀',
+    horizon: { kind: 'graves', far: '#2a3e38', near: '#16241f' },
+    haze: '#5a7a6a2a',
     edgeGlow: '#5a8a7aaa',
   },
   siege: {
-    bg: ['#3a2d18', '#1c1409', '#0a0703'],
-    tile: { shadow: '#150d05', mid: '#5a4a2a', hi: '#9c7a3a', rim: '#d4b06a' },
-    playerWash: '#3da4ff14', enemyWash: '#ff6a3a18',
+    sky: ['#9aaec8', '#6a7e9a', '#3a4458'],
+    ground: ['#5a4a2a', '#2a2010'],
+    tile: { hi: '#c8a868', mid: '#8a6e3a', low: '#5a4628', shadow: '#1a1206', rim: '#e0c084' },
+    playerWash: '#3da4ff18', enemyWash: '#ff6a3a1c',
     rune: ['#ffd97a', '#a8761a'],
-    cornerLeft: '🏰', cornerRight: '⚔️',
-    edgeGlow: '#a87a1a88',
+    horizon: { kind: 'walls', far: '#4a4232', near: '#2a241a' },
+    edgeGlow: '#a87a1a99',
   },
 };
 
-export default function Arena({
+// ---------------------------------------------------------------------------
+// Color helpers
+// ---------------------------------------------------------------------------
+function lighten(hex: string, delta: number): string {
+  if (!hex.startsWith('#') || hex.length < 7) return hex;
+  const c = (i: number) => Math.max(0, Math.min(255, parseInt(hex.slice(i, i + 2), 16) + delta));
+  const h = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${h(c(1))}${h(c(3))}${h(c(5))}`;
+}
+
+// ===========================================================================
+// Arena
+//
+// Memoised: the props (layout / theme / obstacles) are stable for the whole
+// battle, so the ~200-tile grid is built once instead of on every replay
+// tick when the parent screen re-renders.
+// ===========================================================================
+function ArenaBase({
   width, height, layout, theme = 'plains', obstacles = [],
 }: {
   width: number; height: number; layout: HexLayout;
   theme?: MapTheme; obstacles?: Obstacle[];
 }) {
   const { hexW, hexH, totalW, totalH, grid } = layout;
-  const playerMaxCol = grid.playerMaxCol;
-  const enemyMinCol = grid.enemyMinCol;
-  const midCol = Math.floor((playerMaxCol + enemyMinCol) / 2);
+  const midCol = Math.floor((grid.playerMaxCol + grid.enemyMinCol) / 2);
   const midColCx = hexCenter({ col: midCol, row: 0 }, layout).cx;
-
   const t = THEMES[theme] ?? THEMES.plains;
 
+  // --- Hex tiles -----------------------------------------------------------
   const cells: React.ReactNode[] = [];
   for (let row = 0; row < grid.rows; row++) {
     for (let col = 0; col < grid.cols; col++) {
       const { cx, cy } = hexCenter({ col, row }, layout);
-      const isPlayer = col <= playerMaxCol;
-      const isEnemy = col >= enemyMinCol;
-      const isMid = !isPlayer && !isEnemy;
-      // Subtle alternating brightness so adjacent tiles read as separate
-      // facets rather than one large blob.
-      const facetShift = ((row + col) % 2) === 0 ? 0 : -3;
+      const isPlayer = col <= grid.playerMaxCol;
+      const isEnemy = col >= grid.enemyMinCol;
+      const facet = ((row + col) & 1) === 0 ? 4 : -4;
       cells.push(
         <View
-          key={`${row}-${col}`}
+          key={`c${row}-${col}`}
           pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: cx - hexW / 2,
-            top: cy - hexH / 2,
-            width: hexW,
-            height: hexH,
-          }}
+          style={{ position: 'absolute', left: cx - hexW / 2, top: cy - hexH / 2, width: hexW, height: hexH }}
         >
           <TileHex
-            w={hexW}
-            h={hexH}
-            tile={t.tile}
-            wash={isPlayer ? t.playerWash : isEnemy ? t.enemyWash : '#ffffff10'}
-            facetShift={facetShift}
-            emphasize={isMid}
+            w={hexW} h={hexH} tile={t.tile} facet={facet}
+            wash={isPlayer ? t.playerWash : isEnemy ? t.enemyWash : null}
+            contested={!isPlayer && !isEnemy}
           />
         </View>
       );
     }
   }
 
-  // Decorative obstacles drawn as gradient Views (no emoji) so they share
-  // the painted-tile look. The renderer picks per-kind visual.
+  // --- Obstacle props ------------------------------------------------------
   const obstacleNodes = obstacles
     .filter((o) => inBounds({ col: o.col, row: o.row }, grid))
     .map((o, i) => {
       const { cx, cy } = hexCenter({ col: o.col, row: o.row }, layout);
-      const size = Math.min(hexW, hexH);
+      const size = Math.min(hexW, hexH) * 1.32;
       return (
         <View
-          key={`ob-${i}`}
+          key={`ob${i}`}
           pointerEvents="none"
           style={{
             position: 'absolute',
-            left: cx - size / 2,
-            top: cy - size / 2,
-            width: size,
-            height: size,
-            alignItems: 'center',
-            justifyContent: 'center',
+            left: cx - size / 2, top: cy - size * 0.72,
+            width: size, height: size,
+            alignItems: 'center', justifyContent: 'flex-end',
           }}
         >
           <ObstacleArt kind={o.kind} size={size} />
@@ -213,520 +212,485 @@ export default function Arena({
       );
     });
 
-  // Center rune-line glyphs along the contested column.
+  // --- Contested rune divider ---------------------------------------------
   const runeNodes: React.ReactNode[] = [];
   for (let row = 0; row < grid.rows; row++) {
     const { cx, cy } = hexCenter({ col: midCol, row }, layout);
+    const r = hexW * 0.2;
     runeNodes.push(
       <View
-        key={`rune-${row}`}
+        key={`r${row}`}
         pointerEvents="none"
         style={{
-          position: 'absolute',
-          left: cx - hexW * 0.18,
-          top: cy - hexW * 0.18,
-          width: hexW * 0.36,
-          height: hexW * 0.36,
-          borderRadius: hexW * 0.18,
-          borderWidth: 1,
-          borderColor: t.rune[0] + '55',
-          alignItems: 'center',
-          justifyContent: 'center',
+          position: 'absolute', left: cx - r, top: cy - r, width: r * 2, height: r * 2,
+          borderRadius: r, borderWidth: 1.5, borderColor: t.rune[0] + '66',
+          alignItems: 'center', justifyContent: 'center',
         }}
       >
         <View style={{
-          width: hexW * 0.18, height: hexW * 0.18, borderRadius: hexW * 0.09,
-          backgroundColor: t.rune[0] + '88',
+          width: r, height: r, borderRadius: r / 2, backgroundColor: t.rune[0] + 'cc',
+          shadowColor: t.rune[0], shadowOpacity: 1, shadowRadius: 5, shadowOffset: { width: 0, height: 0 },
         }} />
       </View>
     );
   }
 
+  const horizonH = Math.max(40, totalH * 0.36);
+
   return (
-    <View style={[styles.frame, { width: totalW + 16, height: totalH + 16 }]}>
-      {/* Outer gold frame with subtle bevel */}
-      <LinearGradient
-        colors={['#f6c945', '#a9781a', '#5a3c08'] as const}
-        style={styles.frameGrad}
-      />
-      {/* Inner frame highlight */}
-      <View style={styles.frameHi} pointerEvents="none" />
+    <View style={[styles.frame, { width: totalW + FRAME_PAD * 2, height: totalH + FRAME_PAD * 2 }]}>
+      {/* Bevelled gold frame */}
+      <LinearGradient colors={['#ffd874', '#b58a2a', '#5a3c08'] as const} style={styles.frameGrad} />
+      <View style={styles.frameInner} pointerEvents="none" />
 
       <View style={[styles.field, { width: totalW, height: totalH }]}>
-        {/* Sky → ground gradient */}
-        <LinearGradient colors={t.bg} style={styles.bg} />
+        {/* Sky */}
+        <LinearGradient colors={t.sky} style={StyleSheet.absoluteFillObject as any} />
 
-        {/* Distant atmosphere / vignette */}
+        {/* Distant horizon silhouette */}
+        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: horizonH }} pointerEvents="none">
+          <HorizonScenery w={totalW} h={horizonH} theme={t} />
+        </View>
+
+        {/* Ground plane */}
         <LinearGradient
-          colors={['transparent', '#00000088'] as const}
+          colors={[t.ground[0], t.ground[1]] as const}
           start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: totalH - horizonH * 0.55 }}
+        />
+        {/* Sunlight wash from upper-left */}
+        <LinearGradient
+          colors={['#ffffff2a', 'transparent'] as const}
+          start={{ x: 0.1, y: 0 }} end={{ x: 0.7, y: 0.7 }}
           style={StyleSheet.absoluteFillObject as any}
         />
-        {/* Soft top edge highlight (sunlight) */}
+        {/* Team-side ground halos */}
         <LinearGradient
-          colors={['#ffffff22', 'transparent'] as const}
-          start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 0.6 }}
+          colors={['#3da4ff38', 'transparent'] as const}
+          start={{ x: 0, y: 0.6 }} end={{ x: 0.5, y: 0.6 }}
+          style={StyleSheet.absoluteFillObject as any}
+        />
+        <LinearGradient
+          colors={['transparent', '#ff5a3a38'] as const}
+          start={{ x: 0.5, y: 0.6 }} end={{ x: 1, y: 0.6 }}
           style={StyleSheet.absoluteFillObject as any}
         />
 
-        {/* Team-side halos (gentle radial-style glows from the edges) */}
-        <LinearGradient
-          colors={['#3da4ff33', 'transparent'] as const}
-          start={{ x: 0, y: 0.5 }} end={{ x: 0.55, y: 0.5 }}
-          style={StyleSheet.absoluteFillObject as any}
-        />
-        <LinearGradient
-          colors={['transparent', '#ff5a3a33'] as const}
-          start={{ x: 0.45, y: 0.5 }} end={{ x: 1, y: 0.5 }}
-          style={StyleSheet.absoluteFillObject as any}
-        />
-
-        {/* Floor shadow under the grid (gives the tiles "lift") */}
+        {/* Soft contact shadow under the grid */}
         <View
           pointerEvents="none"
           style={{
             position: 'absolute',
-            left: totalW * 0.04, right: totalW * 0.04,
-            top: totalH * 0.04, bottom: totalH * 0.04,
-            backgroundColor: '#00000033',
-            borderRadius: 24,
+            left: totalW * 0.03, right: totalW * 0.03,
+            top: totalH * 0.06, bottom: totalH * 0.04,
+            backgroundColor: '#00000033', borderRadius: 26,
           }}
         />
 
-        {/* Hex tiles */}
         {cells}
 
-        {/* Center divider runes */}
-        {runeNodes}
-        {/* Glow strip behind the rune line */}
+        {/* Rune divider glow strip */}
         <View
           pointerEvents="none"
           style={{
-            position: 'absolute',
-            left: midColCx - 2, width: 4,
-            top: 6, bottom: 6,
-            backgroundColor: t.rune[0] + '33',
-            shadowColor: t.rune[0],
-            shadowOpacity: 1,
-            shadowRadius: 8,
-            shadowOffset: { width: 0, height: 0 },
+            position: 'absolute', left: midColCx - 2.5, width: 5, top: 4, bottom: 4,
+            backgroundColor: t.rune[0] + '3a',
+            shadowColor: t.rune[0], shadowOpacity: 1, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
           }}
         />
+        {runeNodes}
 
-        {/* Obstacles (above tiles, below units) */}
         {obstacleNodes}
 
-        {/* Optional atmospheric haze */}
-        {t.haze && (
-          <View
-            pointerEvents="none"
-            style={[StyleSheet.absoluteFillObject, { backgroundColor: t.haze }]}
-          />
-        )}
+        {/* Foreground framing scenery */}
+        <EdgeScenery w={totalW} h={totalH} hexW={hexW} theme={t} />
 
-        {/* Edge corner emblems */}
-        <Text style={[styles.tower, { left: 8, top: 4 }]}>{t.cornerLeft}</Text>
-        <Text style={[styles.tower, { left: 8, bottom: 4 }]}>{t.cornerLeft}</Text>
-        <Text style={[styles.tower, { right: 8, top: 4 }]}>{t.cornerRight}</Text>
-        <Text style={[styles.tower, { right: 8, bottom: 4 }]}>{t.cornerRight}</Text>
+        {/* Atmospheric haze */}
+        {t.haze && (
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: t.haze }]} />
+        )}
+        {/* Vignette */}
+        <View pointerEvents="none" style={styles.vignette} />
+        <LinearGradient
+          colors={['transparent', '#00000066'] as const}
+          start={{ x: 0.5, y: 0.55 }} end={{ x: 0.5, y: 1 }}
+          style={StyleSheet.absoluteFillObject as any}
+        />
       </View>
 
-      {/* Outer glow halo */}
-      <View
-        pointerEvents="none"
-        style={[styles.glowHalo, {
-          shadowColor: t.edgeGlow,
-        }]}
-      />
+      <View pointerEvents="none" style={[styles.outerGlow, { shadowColor: t.edgeGlow }]} />
     </View>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Hex tile — drawn as a pointy-top hexagon with stacked layers:
-//   1. Cast shadow (slightly offset down)
-//   2. Main body (gradient)
-//   3. Top facet highlight
-//   4. Rim outline (thin ring of slightly lighter color)
-//   5. Optional team wash overlay
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Hex tile — drop shadow + rim + 3-tone bevelled body + team wash
+// ===========================================================================
 function TileHex({
-  w, h, tile, wash, facetShift, emphasize,
+  w, h, tile, wash, facet, contested,
 }: {
   w: number; h: number;
-  tile: { shadow: string; mid: string; hi: string; rim: string };
-  wash: string;
-  facetShift: number;
-  emphasize?: boolean;
+  tile: ThemeStyle['tile'];
+  wash: string | null;
+  facet: number;
+  contested?: boolean;
 }) {
-  // Two hex layers: rim (slightly larger, behind) + body (mid color). Then
-  // two thin View bands for the highlight facet and lower-edge shadow,
-  // plus a wash overlay. Total: ~7 Views per tile (cheap).
-  const inset = 1;
-  const ww = w - inset * 2;
-  const hh = h - inset * 2;
+  const inset = 1.4;
+  const bw = w - inset * 2;
+  const bh = h - inset * 2;
   return (
     <View style={{ width: w, height: h }}>
-      <HexShape w={ww + 2} h={hh + 2} color={tile.rim} dx={inset - 1} dy={inset - 1} />
-      <HexShape w={ww} h={hh} color={tile.mid} dx={inset} dy={inset} />
+      {/* cast shadow */}
+      <HexShape w={w} h={h} top={tile.shadow} mid={tile.shadow} bot={tile.shadow} dx={0} dy={2.5} opacity={0.5} />
+      {/* rim */}
+      <HexShape w={w} h={h} top={tile.rim} mid={tile.rim} bot={tile.rim} dx={0} dy={0} />
+      {/* body */}
+      <HexShape
+        w={bw} h={bh}
+        top={lighten(tile.hi, facet)} mid={tile.mid} bot={tile.low}
+        dx={inset} dy={inset}
+      />
+      {/* glossy top facet */}
       <View
         pointerEvents="none"
         style={{
           position: 'absolute',
-          left: inset + ww * 0.16, top: inset + hh * 0.38,
-          width: ww * 0.68, height: hh * 0.18,
-          backgroundColor: lighten(tile.hi, facetShift),
-          opacity: emphasize ? 0.6 : 0.42,
-          borderRadius: 4,
+          left: inset + bw * 0.2, top: inset + bh * 0.16,
+          width: bw * 0.6, height: bh * 0.16,
+          borderRadius: 99, backgroundColor: '#ffffff', opacity: 0.18,
         }}
       />
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          left: inset + ww * 0.12, top: inset + hh * 0.72,
-          width: ww * 0.76, height: hh * 0.16,
-          backgroundColor: tile.shadow,
-          opacity: 0.40,
-          borderRadius: 4,
-        }}
-      />
-      {wash && wash !== '#ffffff10' && (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute', left: inset, top: inset, width: ww, height: hh,
-            backgroundColor: wash,
-          }}
-        />
+      {wash && (
+        <HexShape w={bw} h={bh} top={wash} mid={wash} bot={wash} dx={inset} dy={inset} />
+      )}
+      {contested && (
+        <HexShape w={bw} h={bh} top={'#ffffff14'} mid={'#ffffff14'} bot={'#ffffff14'} dx={inset} dy={inset} />
       )}
     </View>
   );
 }
 
-// Pointy-top hex shape built from one rectangle + two triangle Views.
+// Pointy-top hexagon from one rect + two triangles, each band its own color.
 function HexShape({
-  w, h, color, dx = 0, dy = 0, opacity = 1,
+  w, h, top, mid, bot, dx = 0, dy = 0, opacity = 1,
 }: {
-  w: number; h: number; color: string;
+  w: number; h: number; top: string; mid: string; bot: string;
   dx?: number; dy?: number; opacity?: number;
 }) {
-  const triH = h * 0.25;
+  const triH = h * 0.26;
   const bodyH = h - triH * 2;
   return (
-    <View
-      style={{
-        position: 'absolute', left: dx, top: dy, width: w, height: h, opacity,
-      }}
-      pointerEvents="none"
-    >
+    <View style={{ position: 'absolute', left: dx, top: dy, width: w, height: h, opacity }} pointerEvents="none">
       <View style={{
-        position: 'absolute', left: 0, top: 0,
-        width: 0, height: 0,
-        borderStyle: 'solid',
-        borderLeftWidth: w / 2, borderRightWidth: w / 2,
-        borderBottomWidth: triH, borderTopWidth: 0,
-        borderLeftColor: 'transparent', borderRightColor: 'transparent',
-        borderBottomColor: color, borderTopColor: 'transparent',
+        position: 'absolute', left: 0, top: 0, width: 0, height: 0,
+        borderLeftWidth: w / 2, borderRightWidth: w / 2, borderBottomWidth: triH,
+        borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: top,
       }} />
+      <View style={{ position: 'absolute', left: 0, top: triH - 0.5, width: w, height: bodyH + 1, backgroundColor: mid }} />
       <View style={{
-        position: 'absolute', left: 0, top: triH - 0.5, width: w, height: bodyH + 1,
-        backgroundColor: color,
-      }} />
-      <View style={{
-        position: 'absolute', left: 0, top: triH + bodyH,
-        width: 0, height: 0,
-        borderStyle: 'solid',
-        borderLeftWidth: w / 2, borderRightWidth: w / 2,
-        borderTopWidth: triH, borderBottomWidth: 0,
-        borderLeftColor: 'transparent', borderRightColor: 'transparent',
-        borderTopColor: color, borderBottomColor: 'transparent',
+        position: 'absolute', left: 0, top: triH + bodyH, width: 0, height: 0,
+        borderLeftWidth: w / 2, borderRightWidth: w / 2, borderTopWidth: triH,
+        borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: bot,
       }} />
     </View>
   );
 }
 
-// Backwards-compatible export used by BattlePrepScreen to draw single
-// placement tiles. The new Arena uses the internal `Hex` component above
-// with richer styling; the prep screen still wants the simpler API.
-export function Hex({
-  w, h, fill, stroke, hiFill,
-}: { w: number; h: number; fill: string; stroke?: string; hiFill?: string }) {
+// ===========================================================================
+// Horizon scenery — distant theme silhouette band
+// ===========================================================================
+function HorizonScenery({ w, h, theme }: { w: number; h: number; theme: ThemeStyle }) {
+  const { kind, far, near } = theme.horizon;
   return (
-    <View style={{ width: w, height: h }}>
-      <HexShape w={w} h={h} color={fill} />
-      {hiFill && (
-        <View pointerEvents="none" style={{
-          position: 'absolute', left: w * 0.22, top: h * 0.42,
-          width: w * 0.56, height: h * 0.18,
-          backgroundColor: hiFill, opacity: 0.4, borderRadius: 4,
+    <View style={{ width: w, height: h }} pointerEvents="none">
+      <SilhouetteRow w={w} band={h} color={far} count={kind === 'walls' ? 6 : 7} kind={kind} layer="far" />
+      <SilhouetteRow w={w} band={h} color={near} count={kind === 'walls' ? 5 : 5} kind={kind} layer="near" />
+    </View>
+  );
+}
+
+function SilhouetteRow({
+  w, band, color, count, kind, layer,
+}: {
+  w: number; band: number; color: string; count: number;
+  kind: SceneryKind; layer: 'far' | 'near';
+}) {
+  const slot = w / count;
+  const base = layer === 'far' ? band * 0.52 : band * 0.82;
+  const peakH = layer === 'far' ? band * 0.55 : band * 0.95;
+  const shapes: React.ReactNode[] = [];
+  for (let i = 0; i < count; i++) {
+    const cx = slot * (i + 0.5) + (layer === 'near' ? slot * 0.18 : 0);
+    const wob = 0.7 + ((i * 37) % 11) / 18;
+    shapes.push(
+      <SceneryShape key={`${layer}${i}`} kind={kind} cx={cx} baseY={band} color={color}
+        width={slot * (kind === 'pines' ? 0.92 : 1.18)} height={peakH * wob} />
+    );
+  }
+  return <>{shapes}</>;
+}
+
+function SceneryShape({
+  kind, cx, baseY, width, height, color,
+}: { kind: SceneryKind; cx: number; baseY: number; width: number; height: number; color: string }) {
+  const left = cx - width / 2;
+  const top = baseY - height;
+  if (kind === 'pines' || kind === 'spires') {
+    // Sharp triangle.
+    return (
+      <View style={{ position: 'absolute', left, top, width, height }}>
+        <View style={{
+          position: 'absolute', left: 0, top: 0, width: 0, height: 0,
+          borderLeftWidth: width / 2, borderRightWidth: width / 2, borderBottomWidth: height,
+          borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: color,
         }} />
-      )}
-      {stroke && (
-        <View pointerEvents="none" style={{
-          position: 'absolute', left: 0, top: h * 0.25, width: w, height: h * 0.5,
-          borderLeftWidth: 1, borderRightWidth: 1,
-          borderColor: stroke,
+      </View>
+    );
+  }
+  if (kind === 'peaks' || kind === 'volcano') {
+    return (
+      <View style={{ position: 'absolute', left, top, width, height }}>
+        <View style={{
+          position: 'absolute', left: 0, top: 0, width: 0, height: 0,
+          borderLeftWidth: width / 2, borderRightWidth: width / 2, borderBottomWidth: height,
+          borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: color,
+        }} />
+        {/* snow / lava cap */}
+        <View style={{
+          position: 'absolute', left: width / 2 - width * 0.13, top: 0, width: 0, height: 0,
+          borderLeftWidth: width * 0.13, borderRightWidth: width * 0.13, borderBottomWidth: height * 0.3,
+          borderLeftColor: 'transparent', borderRightColor: 'transparent',
+          borderBottomColor: kind === 'volcano' ? '#ff7a3a' : '#eef4ff',
+        }} />
+      </View>
+    );
+  }
+  if (kind === 'walls' || kind === 'ruins') {
+    // Blocky battlement.
+    return (
+      <View style={{ position: 'absolute', left, top, width, height, backgroundColor: color }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          {[0, 1, 2].map((k) => (
+            <View key={k} style={{ width: width * 0.22, height: height * 0.22, backgroundColor: color, marginTop: -height * 0.18 }} />
+          ))}
+        </View>
+        {kind === 'ruins' && (
+          <View style={{ position: 'absolute', right: width * 0.2, bottom: 0, width: width * 0.2, height: height * 1.4, backgroundColor: color }} />
+        )}
+      </View>
+    );
+  }
+  // hills / clouds / graves → rounded hump.
+  return (
+    <View style={{
+      position: 'absolute', left, top, width, height: height * 1.4,
+      borderTopLeftRadius: width * 0.6, borderTopRightRadius: width * 0.6,
+      backgroundColor: color,
+    }}>
+      {kind === 'graves' && (
+        <View style={{
+          position: 'absolute', left: width * 0.42, top: -height * 0.3,
+          width: width * 0.16, height: height * 0.5, backgroundColor: color,
+          borderTopLeftRadius: 4, borderTopRightRadius: 4,
         }} />
       )}
     </View>
   );
 }
 
-// Small color helper — additive lighten/darken on hex strings.
-function lighten(hex: string, delta: number): string {
-  if (!hex.startsWith('#') || hex.length < 7) return hex;
-  const r = clamp255(parseInt(hex.slice(1, 3), 16) + delta);
-  const g = clamp255(parseInt(hex.slice(3, 5), 16) + delta);
-  const b = clamp255(parseInt(hex.slice(5, 7), 16) + delta);
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+// ===========================================================================
+// Foreground edge scenery — small framing props at the field borders
+// ===========================================================================
+function EdgeScenery({
+  w, h, hexW, theme,
+}: { w: number; h: number; hexW: number; theme: ThemeStyle }) {
+  const kind = theme.horizon.kind;
+  const s = hexW * 0.95;
+  const corner = (left: number, top: number, k: ObstacleKind, key: string) => (
+    <View key={key} pointerEvents="none" style={{ position: 'absolute', left, top, width: s, height: s, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ObstacleArt kind={k} size={s} />
+    </View>
+  );
+  const edgeKind: ObstacleKind =
+    kind === 'pines' || kind === 'hills' ? 'tree'
+      : kind === 'peaks' ? 'icicle'
+        : kind === 'volcano' ? 'fire'
+          : kind === 'spires' ? 'crystal'
+            : kind === 'graves' ? 'tomb'
+              : kind === 'walls' ? 'tower'
+                : kind === 'clouds' ? 'pillar'
+                  : 'rock';
+  return (
+    <>
+      {corner(-s * 0.18, h - s * 0.92, edgeKind, 'bl')}
+      {corner(w - s * 0.82, h - s * 0.92, edgeKind, 'br')}
+      {corner(w * 0.32, h - s * 0.7, kind === 'volcano' ? 'magma' : kind === 'pines' ? 'bush' : 'rock', 'bm')}
+    </>
+  );
 }
-function clamp255(n: number): number { return Math.max(0, Math.min(255, n)); }
-function toHex(n: number): string { return n.toString(16).padStart(2, '0'); }
 
-// ---------------------------------------------------------------------------
-// Obstacles — gradient + shape Views so the props share the painted look.
-// Each kind composes a tiny scene: shadow base + body + accent.
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Obstacle props — detailed gradient/View art
+// ===========================================================================
 function ObstacleArt({ kind, size }: { kind: ObstacleKind; size: number }) {
   switch (kind) {
+    case 'tree': return <Tree size={size} />;
+    case 'bush': return <Bush size={size * 0.7} />;
     case 'rock':
-    case 'magma':
-      return (
-        <PropFrame size={size}>
-          <Boulder size={size * 0.7} colors={kind === 'magma'
-            ? ['#ff6a2a', '#a83a0e'] as const
-            : ['#a3a3aa', '#4a4a55'] as const}
-          />
-        </PropFrame>
-      );
-    case 'tree':
-      return (
-        <PropFrame size={size}>
-          <Tree size={size * 0.78} />
-        </PropFrame>
-      );
-    case 'bush':
-      return (
-        <PropFrame size={size}>
-          <Bush size={size * 0.6} />
-        </PropFrame>
-      );
+    case 'magma': return <Boulder size={size * 0.78} lava={kind === 'magma'} />;
     case 'crystal':
-    case 'orb':
-      return (
-        <PropFrame size={size}>
-          <Crystal size={size * 0.62} colors={kind === 'orb'
-            ? ['#b89bff', '#5a3acf'] as const
-            : ['#7adfff', '#1f6fd6'] as const}
-          />
-        </PropFrame>
-      );
-    case 'icicle':
-      return (
-        <PropFrame size={size}>
-          <Crystal size={size * 0.62} colors={['#dff4ff', '#5a98c8'] as const} />
-        </PropFrame>
-      );
+    case 'orb': return <Crystal size={size * 0.78} colors={kind === 'orb' ? ['#c6a4ff', '#5a3acf'] : ['#8be4ff', '#1f6fd6']} />;
+    case 'icicle': return <Crystal size={size * 0.8} colors={['#eafaff', '#6aa8d8']} />;
     case 'fire':
-    case 'lava':
-      return (
-        <PropFrame size={size}>
-          <FlameProp size={size * 0.7} />
-        </PropFrame>
-      );
-    case 'banner':
-      return (
-        <PropFrame size={size}>
-          <Banner size={size * 0.78} />
-        </PropFrame>
-      );
-    case 'tower':
-    case 'fortress':
-    case 'pillar':
-    case 'gate':
-      return (
-        <PropFrame size={size}>
-          <Tower size={size * 0.78} variant={kind === 'fortress' ? 'fortress' : kind === 'pillar' ? 'pillar' : kind === 'gate' ? 'gate' : 'tower'} />
-        </PropFrame>
-      );
-    case 'tomb':
-    case 'skull':
-    case 'altar':
-      return (
-        <PropFrame size={size}>
-          <Tomb size={size * 0.7} variant={kind === 'skull' ? 'skull' : kind === 'altar' ? 'altar' : 'tomb'} />
-        </PropFrame>
-      );
-    case 'tent':
-    case 'cauldron':
-      return (
-        <PropFrame size={size}>
-          <Tent size={size * 0.72} variant={kind === 'cauldron' ? 'cauldron' : 'tent'} />
-        </PropFrame>
-      );
+    case 'lava': return <Flame size={size * 0.82} />;
+    case 'banner': return <Banner size={size * 0.92} />;
+    case 'fortress': return <Fortress size={size} />;
+    case 'tower': return <Tower size={size * 0.92} variant="tower" />;
+    case 'gate': return <Tower size={size * 0.92} variant="gate" />;
+    case 'pillar': return <Tower size={size * 0.92} variant="pillar" />;
+    case 'tomb': return <Tomb size={size * 0.82} variant="tomb" />;
+    case 'skull': return <Tomb size={size * 0.82} variant="skull" />;
+    case 'altar': return <Tomb size={size * 0.82} variant="altar" />;
+    case 'tent': return <Tent size={size * 0.86} />;
+    case 'cauldron': return <Cauldron size={size * 0.82} />;
+    default: return <Boulder size={size * 0.7} lava={false} />;
   }
 }
 
-function PropFrame({ size, children }: { size: number; children: React.ReactNode }) {
+function ContactShadow({ size, scale = 0.62 }: { size: number; scale?: number }) {
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
-      {/* Contact shadow disc */}
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          bottom: size * 0.08,
-          width: size * 0.6, height: size * 0.12,
-          borderRadius: 999,
-          backgroundColor: '#00000077',
-        }}
-      />
-      {children}
-    </View>
-  );
-}
-
-function Boulder({ size, colors }: { size: number; colors: readonly [string, string] }) {
-  return (
-    <View style={{ width: size, height: size * 0.7, marginBottom: size * 0.1, alignItems: 'center' }}>
-      <LinearGradient
-        colors={[colors[0], colors[1]] as any}
-        start={{ x: 0.3, y: 0 }} end={{ x: 0.7, y: 1 }}
-        style={{
-          width: size, height: size * 0.66,
-          borderTopLeftRadius: size * 0.42,
-          borderTopRightRadius: size * 0.36,
-          borderBottomLeftRadius: size * 0.18,
-          borderBottomRightRadius: size * 0.22,
-        }}
-      />
-      {/* Highlight bump */}
-      <View style={{
-        position: 'absolute', top: size * 0.06, left: size * 0.18,
-        width: size * 0.4, height: size * 0.16,
-        borderRadius: 999,
-        backgroundColor: '#ffffff44',
-      }} />
-    </View>
+    <View pointerEvents="none" style={{
+      position: 'absolute', bottom: size * 0.04,
+      width: size * scale, height: size * 0.13, borderRadius: 999, backgroundColor: '#00000077',
+    }} />
   );
 }
 
 function Tree({ size }: { size: number }) {
+  const trunkW = size * 0.14;
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ContactShadow size={size} scale={0.5} />
       {/* trunk */}
+      <LinearGradient
+        colors={['#5a3415', '#2e1808'] as const}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+        style={{ position: 'absolute', bottom: size * 0.08, width: trunkW, height: size * 0.34, borderRadius: trunkW / 2 }}
+      />
+      {/* foliage tiers — back tier wider/darker, front tier bright */}
+      {[
+        { b: 0.26, w: 0.92, c: ['#3f9a48', '#1c5824'] },
+        { b: 0.44, w: 0.74, c: ['#5fbf58', '#2a7a32'] },
+        { b: 0.62, w: 0.54, c: ['#86dc78', '#3f9a48'] },
+      ].map((tier, i) => (
+        <View key={i} style={{ position: 'absolute', bottom: size * tier.b, alignItems: 'center' }}>
+          <LinearGradient
+            colors={tier.c as any}
+            start={{ x: 0.3, y: 0 }} end={{ x: 0.7, y: 1 }}
+            style={{
+              width: size * tier.w, height: size * tier.w * 0.62,
+              borderTopLeftRadius: size * tier.w * 0.5, borderTopRightRadius: size * tier.w * 0.5,
+              borderBottomLeftRadius: size * tier.w * 0.3, borderBottomRightRadius: size * tier.w * 0.3,
+            }}
+          />
+        </View>
+      ))}
+      {/* sun highlight */}
       <View style={{
-        position: 'absolute', bottom: 0, width: size * 0.18, height: size * 0.32,
-        backgroundColor: '#3a1f0c', borderRadius: 4,
+        position: 'absolute', bottom: size * 0.72, left: size * 0.3,
+        width: size * 0.2, height: size * 0.12, borderRadius: 99, backgroundColor: '#d6f5b0', opacity: 0.6,
       }} />
-      {/* canopy — three stacked triangles */}
-      <View style={{ position: 'absolute', bottom: size * 0.22, alignItems: 'center' }}>
-        <ConeLeaf size={size * 0.85} top="#5fc35a" bot="#1f6f24" />
-      </View>
-      <View style={{ position: 'absolute', bottom: size * 0.42, alignItems: 'center' }}>
-        <ConeLeaf size={size * 0.7} top="#7ddc70" bot="#2a8a2e" />
-      </View>
-      <View style={{ position: 'absolute', bottom: size * 0.62, alignItems: 'center' }}>
-        <ConeLeaf size={size * 0.55} top="#a0ec88" bot="#43a44a" />
-      </View>
     </View>
-  );
-}
-
-function ConeLeaf({ size, top, bot }: { size: number; top: string; bot: string }) {
-  return (
-    <LinearGradient
-      colors={[top, bot] as any}
-      start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
-      style={{
-        width: size, height: size * 0.55,
-        borderTopLeftRadius: size * 0.5, borderTopRightRadius: size * 0.5,
-      }}
-    />
   );
 }
 
 function Bush({ size }: { size: number }) {
   return (
-    <View style={{ width: size, height: size * 0.6, marginBottom: 2 }}>
+    <View style={{ width: size, height: size * 0.72, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ContactShadow size={size} scale={0.7} />
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+        {[0.6, 0.92, 0.66].map((m, i) => (
+          <LinearGradient key={i}
+            colors={['#6fce63', '#256f2c'] as const}
+            style={{ width: size * 0.42, height: size * 0.42 * m, borderRadius: size * 0.21, marginHorizontal: -size * 0.08 }}
+          />
+        ))}
+      </View>
+      <View style={{ position: 'absolute', top: 0, left: size * 0.22, width: size * 0.3, height: size * 0.14, borderRadius: 99, backgroundColor: '#c6f0a0aa' }} />
+    </View>
+  );
+}
+
+function Boulder({ size, lava }: { size: number; lava: boolean }) {
+  const c: readonly [string, string] = lava ? ['#ff7a3a', '#7a2408'] : ['#b4b4be', '#4a4a55'];
+  return (
+    <View style={{ width: size, height: size * 0.8, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ContactShadow size={size} scale={0.66} />
       <LinearGradient
-        colors={['#7ddc70', '#1f6f24'] as any}
+        colors={c as any}
+        start={{ x: 0.3, y: 0 }} end={{ x: 0.7, y: 1 }}
         style={{
-          width: size, height: size * 0.6,
-          borderRadius: size * 0.32,
+          width: size * 0.86, height: size * 0.62,
+          borderTopLeftRadius: size * 0.4, borderTopRightRadius: size * 0.34,
+          borderBottomLeftRadius: size * 0.16, borderBottomRightRadius: size * 0.2,
         }}
       />
-      <View style={{
-        position: 'absolute', top: 0, left: size * 0.14, width: size * 0.36, height: size * 0.18,
-        borderRadius: 999, backgroundColor: '#bff4a0aa',
-      }} />
+      <View style={{ position: 'absolute', top: size * 0.06, left: size * 0.2, width: size * 0.34, height: size * 0.14, borderRadius: 99, backgroundColor: lava ? '#ffd07a88' : '#ffffff55' }} />
+      {lava && (
+        <View style={{ position: 'absolute', bottom: size * 0.16, width: size * 0.5, height: size * 0.1, borderRadius: 99, backgroundColor: '#ffd24a', opacity: 0.85 }} />
+      )}
     </View>
   );
 }
 
 function Crystal({ size, colors }: { size: number; colors: readonly [string, string] }) {
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ContactShadow size={size} scale={0.42} />
       <View style={{
-        width: size * 0.5, height: size * 0.95,
-        backgroundColor: colors[0],
-        transform: [{ rotate: '6deg' }],
-        // Diamond-ish: clip corners using border-radius on opposite corners.
-        borderTopLeftRadius: size * 0.22,
-        borderTopRightRadius: 4,
-        borderBottomLeftRadius: 4,
-        borderBottomRightRadius: size * 0.22,
-        shadowColor: colors[0],
-        shadowOpacity: 0.9,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 0 },
+        position: 'absolute', bottom: size * 0.06,
+        width: size * 0.7, height: size * 0.16, borderRadius: 99,
+        backgroundColor: colors[0], opacity: 0.4,
       }} />
-      <LinearGradient
-        colors={[colors[0] + 'aa', colors[1]] as any}
-        start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
-        style={{
-          position: 'absolute',
-          width: size * 0.32, height: size * 0.85,
-          transform: [{ rotate: '-8deg' }],
-          borderTopLeftRadius: 4,
-          borderTopRightRadius: size * 0.16,
-          borderBottomLeftRadius: size * 0.16,
-          borderBottomRightRadius: 4,
-        }}
-      />
+      {[
+        { w: 0.3, h: 0.92, rot: '-12deg', dx: -0.16 },
+        { w: 0.42, h: 1.0, rot: '4deg', dx: 0.04 },
+        { w: 0.26, h: 0.7, rot: '16deg', dx: 0.22 },
+      ].map((s, i) => (
+        <LinearGradient key={i}
+          colors={[lighten(colors[0], 30), colors[1]] as any}
+          start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
+          style={{
+            position: 'absolute', bottom: size * 0.1,
+            left: size * (0.5 - s.w / 2 + s.dx),
+            width: size * s.w, height: size * s.h * 0.7,
+            borderTopLeftRadius: size * 0.1, borderTopRightRadius: size * 0.1,
+            transform: [{ rotate: s.rot }],
+            shadowColor: colors[0], shadowOpacity: 0.9, shadowRadius: 6, shadowOffset: { width: 0, height: 0 },
+          }}
+        />
+      ))}
     </View>
   );
 }
 
-function FlameProp({ size }: { size: number }) {
+function Flame({ size }: { size: number }) {
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
-      {/* base */}
-      <View style={{
-        width: size * 0.7, height: size * 0.18,
-        borderRadius: size * 0.1,
-        backgroundColor: '#3a1208',
-      }} />
-      {/* flame body */}
+      <ContactShadow size={size} scale={0.5} />
+      <View style={{ position: 'absolute', bottom: size * 0.06, width: size * 0.56, height: size * 0.14, borderRadius: 99, backgroundColor: '#2a1206' }} />
       <LinearGradient
-        colors={['#ffe066', '#ff8a14', '#ce2e0e'] as any}
+        colors={['#ffe070', '#ff8a1e', '#cf2e0e'] as const}
         start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
         style={{
-          position: 'absolute',
-          bottom: size * 0.14,
-          width: size * 0.5, height: size * 0.7,
-          borderTopLeftRadius: size * 0.4,
-          borderTopRightRadius: size * 0.32,
-          borderBottomLeftRadius: size * 0.2,
-          borderBottomRightRadius: size * 0.2,
+          position: 'absolute', bottom: size * 0.12, width: size * 0.5, height: size * 0.72,
+          borderTopLeftRadius: size * 0.4, borderTopRightRadius: size * 0.3,
+          borderBottomLeftRadius: size * 0.22, borderBottomRightRadius: size * 0.22,
         }}
       />
       <View style={{
-        position: 'absolute', bottom: size * 0.32, width: size * 0.18, height: size * 0.32,
-        borderRadius: size * 0.2,
-        backgroundColor: '#fff2a8',
-        opacity: 0.85,
+        position: 'absolute', bottom: size * 0.28, width: size * 0.2, height: size * 0.36,
+        borderRadius: size * 0.12, backgroundColor: '#fff2b0', opacity: 0.9,
       }} />
     </View>
   );
@@ -735,74 +699,137 @@ function FlameProp({ size }: { size: number }) {
 function Banner({ size }: { size: number }) {
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
-      {/* pole */}
-      <View style={{
-        position: 'absolute', bottom: 0, width: 3, height: size * 0.92,
-        backgroundColor: '#5a3c08',
-        borderRadius: 2,
-      }} />
-      {/* flag */}
+      <ContactShadow size={size} scale={0.3} />
+      <View style={{ position: 'absolute', bottom: 0, width: size * 0.05, height: size * 0.94, backgroundColor: '#4a3010', borderRadius: 2 }} />
+      <View style={{ position: 'absolute', top: 0, width: size * 0.1, height: size * 0.1, borderRadius: 99, backgroundColor: '#ffd24a' }} />
       <LinearGradient
-        colors={['#ff6a55', '#a82323'] as any}
-        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+        colors={['#ff7a62', '#a82323'] as const}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0.6 }}
         style={{
-          position: 'absolute',
-          top: size * 0.06,
-          left: size * 0.5 - 1,
-          width: size * 0.46, height: size * 0.38,
-          borderTopRightRadius: 4, borderBottomRightRadius: 4,
+          position: 'absolute', top: size * 0.1, left: size * 0.52,
+          width: size * 0.42, height: size * 0.4,
         }}
       />
-      {/* finial */}
       <View style={{
-        position: 'absolute', top: 0, width: 6, height: 6, borderRadius: 3,
-        backgroundColor: '#f6c945',
+        position: 'absolute', top: size * 0.22, left: size * 0.66,
+        width: size * 0.14, height: size * 0.14, borderRadius: 99, backgroundColor: '#ffd24a',
       }} />
     </View>
   );
 }
 
-function Tower({ size, variant }: { size: number; variant: 'tower' | 'fortress' | 'pillar' | 'gate' }) {
-  const W = variant === 'fortress' ? size * 0.86 : variant === 'pillar' ? size * 0.34 : variant === 'gate' ? size * 0.78 : size * 0.5;
-  const H = variant === 'pillar' ? size * 0.96 : size * 0.82;
+function Tower({ size, variant }: { size: number; variant: 'tower' | 'gate' | 'pillar' }) {
+  const W = variant === 'pillar' ? size * 0.34 : size * 0.6;
+  const H = variant === 'pillar' ? size * 0.96 : size * 0.86;
   return (
-    <View style={{ width: W, height: H, alignItems: 'center' }}>
-      {/* body */}
-      <LinearGradient
-        colors={['#cbb78a', '#7a6638', '#3f3318'] as any}
-        start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
-        style={{
-          width: W, height: H * 0.86,
-          borderTopLeftRadius: variant === 'gate' ? W * 0.5 : 6,
-          borderTopRightRadius: variant === 'gate' ? W * 0.5 : 6,
-        }}
-      />
-      {/* battlements */}
-      {variant !== 'pillar' && variant !== 'gate' && (
-        <View style={{
-          position: 'absolute', top: 0, left: 0, right: 0, height: H * 0.16,
-          flexDirection: 'row', justifyContent: 'space-around',
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ContactShadow size={size} scale={0.62} />
+      <View style={{ width: W, height: H, alignItems: 'center' }}>
+        <LinearGradient
+          colors={['#d8c294', '#8a7448', '#43381c'] as const}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 0.2 }}
+          style={{
+            width: W, height: H * 0.86,
+            borderTopLeftRadius: variant === 'gate' ? W * 0.5 : 5,
+            borderTopRightRadius: variant === 'gate' ? W * 0.5 : 5,
+          }}
+        />
+        {variant === 'tower' && (
+          <View style={{ position: 'absolute', top: -H * 0.02, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between' }}>
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={{ width: W * 0.26, height: H * 0.16, backgroundColor: '#6a5836' }} />
+            ))}
+          </View>
+        )}
+        {variant !== 'pillar' && (
+          <View style={{
+            position: 'absolute', bottom: 0, width: W * 0.36, height: H * 0.4,
+            backgroundColor: '#160c04', borderTopLeftRadius: W * 0.2, borderTopRightRadius: W * 0.2,
+          }} />
+        )}
+        {variant === 'tower' && (
+          <View style={{
+            position: 'absolute', top: H * 0.3, width: W * 0.2, height: H * 0.2,
+            backgroundColor: '#ffd24a', borderRadius: 2, opacity: 0.92,
+            shadowColor: '#ffd24a', shadowOpacity: 1, shadowRadius: 5, shadowOffset: { width: 0, height: 0 },
+          }} />
+        )}
+        {/* edge shading */}
+        <View pointerEvents="none" style={{ position: 'absolute', right: 0, top: 0, width: W * 0.22, height: H * 0.86, backgroundColor: '#00000033' }} />
+      </View>
+    </View>
+  );
+}
+
+// The marquee prop — a multi-tower keep with crenellations, gate and flags.
+function Fortress({ size }: { size: number }) {
+  const wallW = size * 0.82;
+  const wallH = size * 0.42;
+  const keepW = size * 0.34;
+  const keepH = size * 0.62;
+  const sideW = size * 0.2;
+  const sideH = size * 0.5;
+  const stone: readonly [string, string, string] = ['#d4be90', '#8a7448', '#3e3218'];
+  const Crenel = ({ w, parts }: { w: number; parts: number }) => (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: w }}>
+      {Array.from({ length: parts }).map((_, i) => (
+        <View key={i} style={{ width: w / (parts * 2 - 1), height: size * 0.08, backgroundColor: stone[2] }} />
+      ))}
+    </View>
+  );
+  const Flag = ({ left }: { left: number }) => (
+    <View style={{ position: 'absolute', left, top: -size * 0.06, alignItems: 'center' }}>
+      <View style={{ width: 2, height: size * 0.16, backgroundColor: '#3a2a10' }} />
+      <View style={{ position: 'absolute', top: 0, left: 2, width: size * 0.12, height: size * 0.08, backgroundColor: '#cf3623' }} />
+    </View>
+  );
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ContactShadow size={size} scale={0.86} />
+      {/* side towers */}
+      {[-1, 1].map((dir) => (
+        <View key={dir} style={{
+          position: 'absolute', bottom: 0,
+          left: size / 2 + dir * (wallW / 2 - sideW * 0.4) - sideW / 2,
+          width: sideW, alignItems: 'center',
         }}>
-          {[0, 1, 2, 3].map((i) => (
-            <View key={i} style={{ width: W * 0.16, height: H * 0.16, backgroundColor: '#3f3318' }} />
+          <Crenel w={sideW} parts={2} />
+          <LinearGradient colors={stone as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0.3 }}
+            style={{ width: sideW, height: sideH }} />
+        </View>
+      ))}
+      {/* wall */}
+      <View style={{ position: 'absolute', bottom: 0, alignItems: 'center' }}>
+        <Crenel w={wallW} parts={5} />
+        <LinearGradient colors={stone as any} start={{ x: 0, y: 0 }} end={{ x: 0.4, y: 1 }}
+          style={{ width: wallW, height: wallH }} />
+        {/* gate */}
+        <View style={{
+          position: 'absolute', bottom: 0, width: size * 0.2, height: wallH * 0.74,
+          backgroundColor: '#140c04', borderTopLeftRadius: size * 0.1, borderTopRightRadius: size * 0.1,
+        }} />
+        {/* portcullis bars */}
+        {[0.32, 0.5, 0.68].map((p) => (
+          <View key={p} style={{ position: 'absolute', bottom: 0, left: wallW * p, width: 1.5, height: wallH * 0.7, backgroundColor: '#6a5836' }} />
+        ))}
+      </View>
+      {/* central keep */}
+      <View style={{ position: 'absolute', bottom: wallH * 0.4, alignItems: 'center' }}>
+        <Crenel w={keepW} parts={3} />
+        <LinearGradient colors={stone as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0.25 }}
+          style={{ width: keepW, height: keepH }} />
+        {/* lit windows */}
+        <View style={{ position: 'absolute', top: keepH * 0.34, width: keepW * 0.6, flexDirection: 'row', justifyContent: 'space-between' }}>
+          {[0, 1].map((i) => (
+            <View key={i} style={{
+              width: keepW * 0.2, height: keepH * 0.22, backgroundColor: '#ffd24a', borderRadius: 1.5,
+              shadowColor: '#ffd24a', shadowOpacity: 1, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
+            }} />
           ))}
         </View>
-      )}
-      {/* door */}
-      {variant !== 'pillar' && (
-        <View style={{
-          position: 'absolute', bottom: 2, width: W * 0.32, height: H * 0.42,
-          backgroundColor: '#1a0d04',
-          borderTopLeftRadius: W * 0.2, borderTopRightRadius: W * 0.2,
-        }} />
-      )}
-      {/* windows */}
-      {(variant === 'tower' || variant === 'fortress') && (
-        <View style={{ position: 'absolute', top: H * 0.32, width: W * 0.22, height: H * 0.18,
-          backgroundColor: '#ffd24a', borderRadius: 2, opacity: 0.85,
-          shadowColor: '#ffd24a', shadowOpacity: 1, shadowRadius: 4,
-        }} />
-      )}
+        <Flag left={keepW * 0.12} />
+        <Flag left={keepW * 0.74} />
+      </View>
     </View>
   );
 }
@@ -811,113 +838,104 @@ function Tomb({ size, variant }: { size: number; variant: 'tomb' | 'skull' | 'al
   if (variant === 'skull') {
     return (
       <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
-        <View style={{
-          width: size * 0.6, height: size * 0.55,
-          backgroundColor: '#e8e0c5',
-          borderTopLeftRadius: size * 0.3, borderTopRightRadius: size * 0.3,
-          borderBottomLeftRadius: size * 0.2, borderBottomRightRadius: size * 0.2,
-        }}>
-          <View style={{ position: 'absolute', top: size * 0.18, left: size * 0.1, width: size * 0.12, height: size * 0.16, backgroundColor: '#000', borderRadius: size * 0.08 }} />
-          <View style={{ position: 'absolute', top: size * 0.18, right: size * 0.1, width: size * 0.12, height: size * 0.16, backgroundColor: '#000', borderRadius: size * 0.08 }} />
-        </View>
+        <ContactShadow size={size} scale={0.5} />
+        <LinearGradient colors={['#f0e8cc', '#a89c78'] as const}
+          style={{
+            width: size * 0.62, height: size * 0.58,
+            borderTopLeftRadius: size * 0.31, borderTopRightRadius: size * 0.31,
+            borderBottomLeftRadius: size * 0.22, borderBottomRightRadius: size * 0.22,
+            marginBottom: size * 0.06,
+          }}>
+          <View style={{ position: 'absolute', top: size * 0.2, left: size * 0.1, width: size * 0.14, height: size * 0.17, backgroundColor: '#1a1208', borderRadius: 99 }} />
+          <View style={{ position: 'absolute', top: size * 0.2, right: size * 0.1, width: size * 0.14, height: size * 0.17, backgroundColor: '#1a1208', borderRadius: 99 }} />
+          <View style={{ position: 'absolute', bottom: size * 0.06, alignSelf: 'center', width: size * 0.1, height: size * 0.1, backgroundColor: '#1a1208' }} />
+        </LinearGradient>
       </View>
     );
   }
   if (variant === 'altar') {
     return (
       <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
-        <LinearGradient
-          colors={['#7a6a3a', '#3a2e0c'] as any}
-          style={{ width: size * 0.7, height: size * 0.42, borderRadius: 4 }}
-        />
+        <ContactShadow size={size} scale={0.66} />
+        <LinearGradient colors={['#8a7a48', '#3a2e0c'] as const}
+          style={{ width: size * 0.72, height: size * 0.4, borderRadius: 4 }} />
         <View style={{
-          position: 'absolute', top: size * 0.16,
-          width: size * 0.4, height: size * 0.4, borderRadius: size * 0.2,
-          backgroundColor: '#c9a3ff',
-          shadowColor: '#c9a3ff', shadowOpacity: 1, shadowRadius: 8,
+          position: 'absolute', bottom: size * 0.34,
+          width: size * 0.36, height: size * 0.36, borderRadius: 99, backgroundColor: '#c9a3ff',
+          shadowColor: '#c9a3ff', shadowOpacity: 1, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
         }} />
       </View>
     );
   }
-  // tomb
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
-      <LinearGradient
-        colors={['#a8a294', '#5a5246', '#2a261c'] as any}
-        start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
+      <ContactShadow size={size} scale={0.54} />
+      <LinearGradient colors={['#b4ac98', '#5e564a', '#2a261c'] as const}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0.4 }}
         style={{
-          width: size * 0.6, height: size * 0.78,
+          width: size * 0.6, height: size * 0.74,
           borderTopLeftRadius: size * 0.3, borderTopRightRadius: size * 0.3,
-        }}
-      />
-      <View style={{
-        position: 'absolute', top: size * 0.28, width: 3, height: size * 0.32, backgroundColor: '#2a261c',
-      }} />
-      <View style={{
-        position: 'absolute', top: size * 0.32, width: size * 0.32, height: 3, backgroundColor: '#2a261c',
-      }} />
+        }} />
+      <View style={{ position: 'absolute', top: size * 0.22, width: 3.5, height: size * 0.3, backgroundColor: '#2a261c' }} />
+      <View style={{ position: 'absolute', top: size * 0.28, width: size * 0.3, height: 3.5, backgroundColor: '#2a261c' }} />
     </View>
   );
 }
 
-function Tent({ size, variant }: { size: number; variant: 'tent' | 'cauldron' }) {
-  if (variant === 'cauldron') {
-    return (
-      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
-        <View style={{
-          width: size * 0.7, height: size * 0.5,
-          backgroundColor: '#1a1a1a',
-          borderBottomLeftRadius: size * 0.34,
-          borderBottomRightRadius: size * 0.34,
-          borderTopLeftRadius: 4, borderTopRightRadius: 4,
-        }} />
-        <LinearGradient
-          colors={['#bf3a14', '#3a0a04'] as any}
-          start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
-          style={{
-            position: 'absolute', bottom: size * 0.34,
-            width: size * 0.7, height: size * 0.12,
-            borderRadius: 4,
-          }}
-        />
-      </View>
-    );
-  }
-  // tent
+function Tent({ size }: { size: number }) {
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ContactShadow size={size} scale={0.7} />
       <View style={{
         width: 0, height: 0,
-        borderStyle: 'solid',
-        borderLeftWidth: size * 0.42, borderRightWidth: size * 0.42,
-        borderBottomWidth: size * 0.62, borderTopWidth: 0,
-        borderLeftColor: 'transparent', borderRightColor: 'transparent',
-        borderBottomColor: '#a8521c',
+        borderLeftWidth: size * 0.44, borderRightWidth: size * 0.44, borderBottomWidth: size * 0.66,
+        borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#b85a22',
       }} />
-      <View style={{
-        position: 'absolute', bottom: 0, width: size * 0.18, height: size * 0.32,
-        backgroundColor: '#1a0d04',
-      }} />
+      <View style={{ position: 'absolute', right: size * 0.1, bottom: 0, width: 0, height: 0,
+        borderLeftWidth: size * 0.44, borderRightWidth: 0, borderBottomWidth: size * 0.66,
+        borderLeftColor: 'transparent', borderBottomColor: '#00000033' }} />
+      <View style={{ position: 'absolute', bottom: 0, width: size * 0.2, height: size * 0.34, backgroundColor: '#160c04', borderTopLeftRadius: size * 0.1, borderTopRightRadius: size * 0.1 }} />
+      <View style={{ position: 'absolute', top: size * 0.16, width: size * 0.1, height: size * 0.1, borderRadius: 99, backgroundColor: '#ffd24a' }} />
     </View>
   );
 }
 
+function Cauldron({ size }: { size: number }) {
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <ContactShadow size={size} scale={0.62} />
+      <View style={{
+        width: size * 0.72, height: size * 0.5, backgroundColor: '#181818',
+        borderBottomLeftRadius: size * 0.36, borderBottomRightRadius: size * 0.36,
+        borderTopLeftRadius: 4, borderTopRightRadius: 4,
+      }} />
+      <LinearGradient colors={['#9be86a', '#2a8a2e'] as const}
+        style={{ position: 'absolute', bottom: size * 0.34, width: size * 0.66, height: size * 0.12, borderRadius: 99 }} />
+      <View style={{ position: 'absolute', bottom: size * 0.42, width: size * 0.2, height: size * 0.2, borderRadius: 99, backgroundColor: '#bff09a', opacity: 0.7 }} />
+    </View>
+  );
+}
+
+// ===========================================================================
 const styles = StyleSheet.create({
-  frame: { borderRadius: 22, padding: 8, alignSelf: 'center' },
+  frame: { borderRadius: 22, padding: FRAME_PAD, alignSelf: 'center' },
   frameGrad: { ...StyleSheet.absoluteFillObject, borderRadius: 22 },
-  frameHi: {
+  frameInner: {
     ...StyleSheet.absoluteFillObject, borderRadius: 22,
-    borderWidth: 2, borderColor: '#fffaa044',
+    borderWidth: 2, borderColor: '#fff7a055',
   },
   field: {
     borderRadius: 14, overflow: 'hidden', backgroundColor: '#0c1828',
-    borderWidth: 2, borderColor: '#0a0608',
+    borderWidth: 2, borderColor: '#000',
   },
-  bg: { ...StyleSheet.absoluteFillObject },
-  tower: { position: 'absolute', fontSize: 18, opacity: 0.55, textShadowColor: '#000a', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
-  glowHalo: {
+  vignette: {
+    ...StyleSheet.absoluteFillObject, borderRadius: 12,
+    borderWidth: 26, borderColor: '#0000003a',
+  },
+  outerGlow: {
     ...StyleSheet.absoluteFillObject, borderRadius: 22,
-    shadowOpacity: 0.8, shadowRadius: 18, shadowOffset: { width: 0, height: 0 },
-    elevation: 4,
+    shadowOpacity: 0.85, shadowRadius: 18, shadowOffset: { width: 0, height: 0 }, elevation: 5,
   },
 });
+
+export default React.memo(ArenaBase);

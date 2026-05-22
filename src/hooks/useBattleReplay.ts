@@ -7,6 +7,7 @@ import { computeBattle, buildPlayerUnit, buildEnemyUnit } from '../utils/battleE
 import { LEVELS } from '../data/levels';
 import { useGameStore, getHeroEffectiveStats, generateArenaWave } from '../store/gameStore';
 import { HEX_COLS, HEX_ROWS, HexGrid, HexLayout, hexCenter } from '../utils/hex';
+import { heroIdOfPlacement } from '../utils/placement';
 
 // Legacy re-exports — kept so older imports still resolve.
 export const GRID_COLS = HEX_COLS;
@@ -345,7 +346,8 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       // very old saves where these fields didn't yet exist.
       const stronghold = (store.stronghold ?? {}) as Record<string, number>;
       const sanctumMana = (stronghold['sanctum'] ?? 0) * 8;
-      const playerUnits = Object.entries(placedHeroes).flatMap(([heroId, pos]) => {
+      const playerUnits = Object.entries(placedHeroes).flatMap(([placementKey, pos]) => {
+        const heroId = heroIdOfPlacement(placementKey);
         const hero = heroes[heroId];
         const stats = getHeroEffectiveStats(heroId, store);
         if (!hero || !stats) return [];
@@ -711,7 +713,7 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       const fin = finalUnits.current;
       const survivors = fin.filter((u) => u.isPlayer && u.isAlive);
       const won = survivors.length > 0 && fin.filter((u) => !u.isPlayer).every((u) => !u.isAlive);
-      const heroIds = Object.keys(placedHeroes);
+      const heroIds = [...new Set(Object.keys(placedHeroes).map(heroIdOfPlacement))];
       const pUnits = fin.filter((u) => u.isPlayer);
       const dmg = pUnits.reduce((s, u) => s + u.damageDealt, 0);
       const heal = pUnits.reduce((s, u) => s + u.healingDone, 0);
