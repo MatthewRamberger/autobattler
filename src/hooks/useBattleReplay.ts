@@ -190,6 +190,15 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
       logs.current = computed.log;
       finalUnits.current = computed.finalUnits;
 
+      // Diagnostic header pushed directly into the displayed log so we can
+      // see from the screen alone whether setup actually produced a battle.
+      // If any of these counts are 0 we know something's wrong with setup
+      // even without a debugger attached.
+      safeSet(setLog, [{
+        tick: 0, type: 'system' as const,
+        text: `🎯 ${playerUnits.length}v${enemyUnits.length} · ${computed.events.length} events queued`,
+      }]);
+
       const all = [...playerUnits, ...enemyUnits];
       const map = new Map<string, UnitAnims>();
       for (const u of all) map.set(u.id, makeAnims(u.isPlayer ? 1 : -1));
