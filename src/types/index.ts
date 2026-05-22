@@ -400,5 +400,6 @@ export interface GameState {
     particles: boolean;
     reduceMotion: boolean;
     autoFastForward: boolean;
+    turnByTurn: boolean;
   };
 }

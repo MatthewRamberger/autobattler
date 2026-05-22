@@ -29,6 +29,8 @@ export default function SettingsScreen() {
             value={settings.reduceMotion} onChange={(v) => updateSettings({ reduceMotion: v })} />
           <Toggle label="Auto fast-forward" desc="Skip animations after the first kill."
             value={settings.autoFastForward} onChange={(v) => updateSettings({ autoFastForward: v })} />
+          <Toggle label="Turn-by-turn" desc="Pause after every unit's action — tap NEXT to advance."
+            value={settings.turnByTurn} onChange={(v) => updateSettings({ turnByTurn: v })} />
         </Panel>
       </ScrollView>
     </Screen>
