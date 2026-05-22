@@ -245,6 +245,45 @@ export interface EnemyConfig {
   abilityId?: string;
 }
 
+export type MapTheme =
+  | 'plains'
+  | 'forest'
+  | 'ruins'
+  | 'tundra'
+  | 'inferno'
+  | 'shadow'
+  | 'celestial'
+  | 'volcanic'
+  | 'undead'
+  | 'siege';
+
+export type ObstacleKind =
+  | 'rock'        // gray boulder
+  | 'tree'        // pine
+  | 'bush'        // small shrub
+  | 'banner'      // flag/standard
+  | 'tower'       // small watchtower
+  | 'fortress'    // large keep
+  | 'gate'        // arched gateway
+  | 'crystal'     // magical crystal
+  | 'icicle'      // ice spike
+  | 'skull'       // bone pile
+  | 'tomb'        // gravestone
+  | 'fire'        // flame
+  | 'lava'        // lava pool
+  | 'magma'       // magma rock
+  | 'pillar'      // ancient column
+  | 'altar'       // sacrificial altar
+  | 'orb'         // floating orb
+  | 'tent'        // war tent
+  | 'cauldron';   // boiling cauldron
+
+export interface Obstacle {
+  col: number;
+  row: number;
+  kind: ObstacleKind;
+}
+
 export interface Level {
   id: number;
   name: string;
@@ -266,6 +305,12 @@ export interface Level {
   // Optional override of the placement cap (defaults to the grid's
   // maxHeroes — 5 for small, 12 for siege).
   maxHeroes?: number;
+  // Visual theming for the battlefield. Drives background gradient
+  // and per-tile tint. Defaults to 'plains' if omitted.
+  theme?: MapTheme;
+  // Decorative props rendered in the contested column. Purely visual
+  // (do not block movement) but make each map feel unique.
+  obstacles?: Obstacle[];
 }
 
 export type Screen =

@@ -123,10 +123,10 @@ export default function BattleScreen() {
             // Center the initial scroll on the action.
             contentOffset={{ x: Math.max(0, (fieldW - fieldWBudget) / 2), y: 0 }}
           >
-            <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} />
+            <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} theme={levelReplay?.theme} obstacles={levelReplay?.obstacles} />
           </ScrollView>
         ) : (
-          <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} />
+          <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} theme={levelReplay?.theme} obstacles={levelReplay?.obstacles} />
         )}
       </View>
 
@@ -204,16 +204,18 @@ export default function BattleScreen() {
 }
 
 function ArenaCanvas({
-  fieldW, fieldH, layout, units, projectiles, vfx, getAnims,
+  fieldW, fieldH, layout, units, projectiles, vfx, getAnims, theme, obstacles,
 }: {
   fieldW: number; fieldH: number;
   layout: ReturnType<typeof hexLayout>;
   units: any[]; projectiles: any[]; vfx: any[];
   getAnims: (id: string) => any;
+  theme?: import('../types').MapTheme;
+  obstacles?: import('../types').Obstacle[];
 }) {
   return (
     <View style={{ width: fieldW + FRAME_PAD * 2, height: fieldH + FRAME_PAD * 2 }}>
-      <Arena width={fieldW} height={fieldH} layout={layout} />
+      <Arena width={fieldW} height={fieldH} layout={layout} theme={theme} obstacles={obstacles} />
       <View style={[styles.unitLayer, { left: FRAME_PAD, top: FRAME_PAD, width: fieldW, height: fieldH }]} pointerEvents="none">
         {units.map((u) => (
           <UnitAvatar key={u.id} unit={u} anims={getAnims(u.id)} layout={layout}
