@@ -1,6 +1,6 @@
-import React, { useMemo, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect, Suspense } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Alert,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Alert, ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,11 +10,18 @@ import { gridForLevel } from '../utils/hex';
 import { BattleLogEntry } from '../types';
 import { CHEST_THEMES } from '../data/chests';
 import ChestOpening from '../components/ChestOpening';
-import BattleCanvas3D from '../components/battle/BattleCanvas3D';
-import { Engine } from '../game3d/Engine';
+import BattleCanvasErrorBoundary from '../components/battle/BattleCanvasErrorBoundary';
 import { usePlayback } from '../game3d/usePlayback';
 import { UnitStatLine } from '../game3d/types';
+import type { Engine } from '../game3d/Engine';
 import { ScreenBackground, GButton, Panel, Plate, palette, gradients } from '../components/ui';
+
+// Lazy-load the 3D canvas so the eager `requireNativeModule('ExpoGL')`
+// call inside expo-gl only runs when the user actually enters a battle.
+// If the host APK predates the expo-gl native link the lazy resolution
+// rejects and the parent ErrorBoundary catches it instead of the bundle
+// crashing on launch.
+const BattleCanvas3D = React.lazy(() => import('../components/battle/BattleCanvas3D'));
 
 export default function BattleScreen() {
   const { setScreen, clearPlacements, battleSpeed, setBattleSpeed, forfeitBattle, currentLevelId, heroes, equipment } = useGameStore();
@@ -115,17 +122,29 @@ export default function BattleScreen() {
       </View>
 
       {/* Arena — 3D battlefield. Drag to orbit, pinch to zoom,
-          double-tap to recenter. */}
+          double-tap to recenter. Lazy-loaded so expo-gl's native-
+          module probe only runs when battle starts; the inline
+          ErrorBoundary catches a missing native link and renders
+          a clear "rebuild required" panel instead of crashing. */}
       <View style={styles.arenaArea}>
-        <BattleCanvas3D
-          width={canvasW}
-          height={canvasH}
-          grid={grid}
-          theme={levelReplay?.theme}
-          obstacles={levelReplay?.obstacles}
-          units={units}
-          onEngineReady={(eng) => { engineRef.current = eng; }}
-        />
+        <BattleCanvasErrorBoundary width={canvasW} height={canvasH} onBack={onForfeit}>
+          <Suspense fallback={
+            <View style={{ width: canvasW, height: canvasH, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator size="large" color={palette.gold} />
+              <Text style={{ color: palette.textSoft, marginTop: 10, fontWeight: '700' }}>Loading battlefield…</Text>
+            </View>
+          }>
+            <BattleCanvas3D
+              width={canvasW}
+              height={canvasH}
+              grid={grid}
+              theme={levelReplay?.theme}
+              obstacles={levelReplay?.obstacles}
+              units={units}
+              onEngineReady={(eng) => { engineRef.current = eng; }}
+            />
+          </Suspense>
+        </BattleCanvasErrorBoundary>
       </View>
 
       {/* Controls */}
