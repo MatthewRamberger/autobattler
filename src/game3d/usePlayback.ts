@@ -23,7 +23,7 @@ import { useGameStore, getHeroEffectiveStats, generateArenaWave } from '../store
 import { chestForArenaWave, chestForDifficulty } from '../data/chests';
 import { HexGrid } from '../utils/hex';
 import { heroIdOfPlacement } from '../utils/placement';
-import { Engine } from './Engine';
+import type { Engine } from './Engine';
 import { BattleResultSummary, Phase, UnitSnapshot } from './types';
 
 const BASE_TICK_MS = 720;
