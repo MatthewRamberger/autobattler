@@ -10,10 +10,10 @@ import { gridForLevel } from '../utils/hex';
 import { BattleLogEntry } from '../types';
 import { CHEST_THEMES } from '../data/chests';
 import ChestOpening from '../components/ChestOpening';
-import BattleCanvas3D from '../components/battle/BattleCanvas3D';
-import { usePlayback } from '../game3d/usePlayback';
-import { UnitStatLine } from '../game3d/types';
-import type { Engine } from '../game3d/Engine';
+import BattleCanvas from '../game/BattleCanvas';
+import { usePlayback } from '../game/usePlayback';
+import { UnitStatLine } from '../game/types';
+import type { Engine } from '../game/Engine';
 import { ScreenBackground, GButton, Panel, Plate, palette, gradients } from '../components/ui';
 
 export default function BattleScreen() {
@@ -42,6 +42,7 @@ export default function BattleScreen() {
   const {
     isArena: isArenaReplay, level: levelReplay, phase, units, log, tick, result,
     togglePause, fastForward, advanceTurn, toggleTurnByTurn, turnByTurnActive, turnSourceId,
+    floats,
   } = usePlayback(grid, engineRef);
   const [logFilter, setLogFilter] = useState<'all' | 'crits' | 'heals' | 'abilities' | 'deaths'>('all');
   // Toggle the per-unit damage / heal / taken stats overlay during battle.
@@ -114,21 +115,19 @@ export default function BattleScreen() {
         <CrownCount tint={palette.red} label="ENEMY" alive={aliveE} total={enemies.length} right />
       </View>
 
-      {/* Arena — 3D battlefield. Drag to orbit, pinch to zoom,
-          double-tap to recenter. BattleCanvas3D is a runtime-only
-          wrapper around the heavy 3D implementation, so the expo-gl
-          native-module probe only fires once the user actually
-          enters a battle; if the native side isn't linked, the
-          wrapper renders an inline rebuild-required panel instead
-          of crashing. */}
+      {/* Arena — 2.5D battlefield. Drag to pan, pinch to zoom,
+          double-tap to recenter. The whole renderer is pure-JS
+          (Animated.Views, no native modules) so it can never
+          fail to load — entering battle always works. */}
       <View style={styles.arenaArea}>
-        <BattleCanvas3D
+        <BattleCanvas
           width={canvasW}
           height={canvasH}
           grid={grid}
           theme={levelReplay?.theme}
           obstacles={levelReplay?.obstacles}
           units={units}
+          floats={floats}
           onEngineReady={(eng) => { engineRef.current = eng; }}
         />
       </View>

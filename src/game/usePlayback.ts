@@ -1,19 +1,8 @@
-// Battle playback hook for the 3D engine.
+// Battle playback hook for the pure-JS game engine.
 //
-// Owns the deterministic battle simulation (same path as the legacy
-// useBattleReplay: builds player/enemy units, calls computeBattle()
-// once, then streams its events out to the engine on a rescheduling
-// timer). The engine handles ALL visual side-effects — this hook
-// only updates React state for the UI shell:
-//
-//   • phase, tick, log
-//   • unit snapshots (HUD alive counts, stat table, ability ready flag)
-//   • result summary for the post-battle modal
-//   • controls (pause, fast-forward, advance, turn-by-turn toggle)
-//
-// The hook accepts an `engineRef` and pushes BattleEvent batches into
-// it; the engine drives Three.js. Mid-battle gestures (pan/zoom) are
-// handled directly on the GLView wrapper, not here.
+// Same architecture as the legacy useBattleReplay: build the deterministic
+// battle sim once, stream its events to the engine on a rescheduling
+// timer, expose the React state the HUD needs.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BattleEvent, BattleLogEntry, BattleUnit } from '../types';
@@ -42,6 +31,7 @@ export interface PlaybackApi {
   toggleTurnByTurn: () => void;
   turnByTurnActive: boolean;
   turnSourceId: string | null;
+  floats: Array<{ id: string; unitId: string; text: string; color: string; crit?: boolean; fontSize?: number; bornMs: number }>;
 }
 
 export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Engine | null>): PlaybackApi {
@@ -59,15 +49,13 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
   const [log, setLog] = useState<BattleLogEntry[]>([]);
   const [units, setUnits] = useState<UnitSnapshot[]>([]);
   const [result, setResult] = useState<BattleResultSummary | null>(null);
+  const [floats, setFloats] = useState<PlaybackApi['floats']>([]);
 
   const mounted = useRef(true);
   const events = useRef<BattleEvent[]>([]);
   const logs = useRef<BattleLogEntry[]>([]);
   const evIdx = useRef(0);
   const finalUnits = useRef<BattleUnit[]>([]);
-  // Initial unit list captured at setup so we can seed the engine
-  // whenever its GL context finishes being created (which can happen
-  // after `setup` has already run).
   const initialUnits = useRef<BattleUnit[]>([]);
   const tickRef = useRef(0);
   const paused = useRef(false);
@@ -76,16 +64,21 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
   const turnSourceRef = useRef<string | null>(null);
   const displayedLogTicks = useRef<Set<string>>(new Set());
   const engineSeeded = useRef(false);
+  const floatId = useRef(1);
 
   const safeSet = useCallback(<T,>(setter: (v: T) => void, value: T) => {
     if (mounted.current) setter(value);
   }, []);
 
-  // -------------------------------------------------------------------
-  // Setup: build initial units, compute the battle, seed the engine.
-  // We also reset every ref so React Strict Mode's double-invocation
-  // in dev doesn't leave stale state from the first pass.
-  // -------------------------------------------------------------------
+  function pushFloat(unitId: string, text: string, color: string, fontSize?: number, crit?: boolean) {
+    const id = `f_${floatId.current++}`;
+    setFloats((prev) => [...prev, { id, unitId, text, color, fontSize, crit, bornMs: Date.now() }]);
+    setTimeout(() => {
+      if (!mounted.current) return;
+      setFloats((prev) => prev.filter((f) => f.id !== id));
+    }, 1100);
+  }
+
   useEffect(() => {
     mounted.current = true;
     doneRef.current = false;
@@ -95,6 +88,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     events.current = [];
     logs.current = [];
     finalUnits.current = [];
+    initialUnits.current = [];
     displayedLogTicks.current = new Set();
     turnSourceRef.current = null;
     turnByTurnRef.current = !!store.settings?.turnByTurn;
@@ -104,6 +98,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     safeSet(setTick, 0);
     safeSet(setLog, []);
     safeSet(setResult, null);
+    safeSet(setFloats, []);
 
     try {
       const enemyCfg = level ? level.enemies : generateArenaWave(arenaWave);
@@ -148,12 +143,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
 
       const all = [...playerUnits, ...enemyUnits];
       initialUnits.current = all.map((u) => ({ ...u, position: { ...u.position } }));
-      setUnits(all.map((u) => snapshotOf(u)));
-
-      // Seed the engine when it's ready. The engine is created
-      // asynchronously by the GLView's onContextCreate, so it may not
-      // exist yet on this commit. The replay-loop effect retries
-      // seeding before it processes events.
+      setUnits(all.map(snapshotOf));
       maybeSeedEngine();
 
       safeSet(setLog, [{
@@ -161,7 +151,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
         text: `🎯 ${playerUnits.length}v${enemyUnits.length} · ${computed.events.length} events queued`,
       }]);
     } catch (err) {
-      console.warn('[battle3d] setup failed', err);
+      console.warn('[playback] setup failed', err);
       const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       safeSet(setLog, [{ tick: 0, type: 'system' as const, text: `⚠ Battle setup failed — ${msg}` }]);
       finish();
@@ -174,18 +164,14 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
   function maybeSeedEngine() {
     const e = engineRef.current;
     if (!e || engineSeeded.current) return;
-    const seed = initialUnits.current;
-    if (!seed.length) return;
-    e.resetUnits(seed);
+    if (!initialUnits.current.length) return;
+    e.resetUnits(initialUnits.current.map((u) => ({
+      id: u.id, heroClass: u.heroClass, isPlayer: u.isPlayer, position: u.position,
+    })));
     engineSeeded.current = true;
   }
 
-  // -------------------------------------------------------------------
-  // Replay loop. Same architecture as the legacy hook: a self-
-  // rescheduling timeout driven by phase/battleSpeed. On each iteration
-  // we consume a tick's worth of events, push them to the engine for
-  // visual presentation, and then update React state for the HUD.
-  // -------------------------------------------------------------------
+  // Drive playback. Self-rescheduling timeout.
   useEffect(() => {
     if (phase !== 'running') return;
     let cancelled = false;
@@ -197,10 +183,6 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     const runOne = () => {
       if (cancelled || !mounted.current || doneRef.current) return;
       if (paused.current) { tid = setTimeout(runOne, 100); return; }
-
-      // Ensure the engine has had a chance to be created + seeded. If
-      // not yet, re-check next frame — the GLView's onContextCreate
-      // should fire very shortly after mount.
       if (!engineRef.current) { tid = setTimeout(runOne, 32); return; }
       if (!engineSeeded.current) maybeSeedEngine();
       if (!engineSeeded.current) { tid = setTimeout(runOne, 32); return; }
@@ -232,7 +214,6 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
         return;
       }
 
-      // Normal continuous playback — one tick's worth of events per step.
       const t = evs[evIdx.current]?.tick ?? tickRef.current;
       const batch: BattleEvent[] = [];
       while (evIdx.current < evs.length && evs[evIdx.current].tick === t) {
@@ -243,8 +224,6 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
       tid = setTimeout(runOne, BASE_TICK_MS / Math.max(1, store.battleSpeed));
     };
 
-    // First scheduling waits a frame so the engine has a chance to be
-    // created (its onContextCreate is async).
     tid = setTimeout(runOne, 32);
     return () => { cancelled = true; if (tid) clearTimeout(tid); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,19 +235,114 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     tickRef.current = lastTick;
     safeSet(setTick, lastTick);
 
-    // Push to the engine (visual presentation).
-    engineRef.current?.applyEvents(batch);
+    const eng = engineRef.current;
+    const reduce = store.settings?.reduceMotion ?? false;
+    const particles = store.settings?.particles ?? true;
 
-    // Update React-side snapshots for the HUD.
+    for (const ev of batch) {
+      switch (ev.kind) {
+        case 'spawn':
+          if (ev.unit && eng) {
+            eng.spawnUnit({
+              id: ev.unit.id,
+              heroClass: ev.unit.heroClass,
+              isPlayer: ev.unit.isPlayer,
+              gridPos: ev.unit.position,
+            });
+          }
+          break;
+        case 'move':
+          if (eng && ev.sourceId && ev.toPosition) {
+            eng.moveUnit(ev.sourceId, ev.toPosition, reduce ? 80 : 320);
+          }
+          break;
+        case 'attack':
+        case 'projectile':
+          if (eng && ev.sourceId) {
+            const target = ev.targetId ? findUnitPos(ev.targetId) : null;
+            eng.attack(ev.sourceId, target, ev.kind === 'projectile');
+            if (ev.kind === 'projectile' && ev.targetId && particles) {
+              setTimeout(() => {
+                if (!mounted.current) return;
+                engineRef.current?.spawnProjectile(ev.sourceId!, ev.targetId!, ev.element ?? 'physical', reduce ? 200 : 380);
+              }, reduce ? 60 : 160);
+            }
+          }
+          break;
+        case 'damage':
+          if (eng && ev.targetId) {
+            eng.takeHit(ev.targetId);
+            if (particles) {
+              const p = eng.unitScreenPos(ev.targetId);
+              if (p) eng.spawnSparkBurst(p.x, p.y, ev.element ?? 'physical', 6);
+            }
+            pushFloat(ev.targetId, `${ev.value ?? 0}`, '#ffd24a');
+          }
+          break;
+        case 'crit':
+          if (eng && ev.targetId) {
+            eng.worldShake(5);
+            if (particles) {
+              const p = eng.unitScreenPos(ev.targetId);
+              if (p) eng.spawnShockwave(p.x, p.y, ev.element ?? 'physical');
+            }
+            pushFloat(ev.targetId, `${ev.value}!`, '#ff5d3c', 22, true);
+          }
+          break;
+        case 'dodge':
+          if (ev.targetId) pushFloat(ev.targetId, 'MISS', '#9fd3ff', 13);
+          break;
+        case 'heal':
+          if (eng && ev.targetId && ev.value) {
+            eng.cast(ev.targetId);
+            if (particles) {
+              const p = eng.unitScreenPos(ev.targetId);
+              if (p) eng.spawnCastMotes(p.x, p.y, 'holy');
+            }
+            pushFloat(ev.targetId, `+${ev.value}`, '#5ef07a');
+          }
+          break;
+        case 'ability':
+          if (eng && ev.sourceId) {
+            eng.cast(ev.sourceId);
+            if (particles) {
+              const p = eng.unitScreenPos(ev.sourceId);
+              if (p) {
+                eng.spawnShockwave(p.x, p.y, (ev.element ?? 'physical') as any);
+                eng.spawnCastMotes(p.x, p.y, (ev.element ?? 'physical') as any);
+              }
+            }
+            pushFloat(ev.sourceId, ev.text ?? 'Ability', '#c9a3ff', 13);
+          }
+          break;
+        case 'shield':
+          if (ev.targetId && ev.value) pushFloat(ev.targetId, `+${ev.value} 🛡`, '#ffd24a', 12);
+          break;
+        case 'death':
+          if (eng && ev.targetId) {
+            const p = eng.unitScreenPos(ev.targetId);
+            eng.killUnit(ev.targetId);
+            if (p && particles) eng.spawnDeathWisps(p.x, p.y);
+            eng.worldShake(3);
+          }
+          break;
+      }
+    }
+
+    // Update React snapshots for the HUD (alive counts, stat table).
     setUnits((prev) => applyEventsToSnapshots(prev, batch));
 
-    // Append newly-revealed log lines.
     const ticks = new Set(batch.map((b) => b.tick));
     const newLogs = logs.current.filter((e) =>
       ticks.has(e.tick) && !displayedLogTicks.current.has(`${e.tick}_${e.text}`)
     );
     for (const l of newLogs) displayedLogTicks.current.add(`${l.tick}_${l.text}`);
     if (newLogs.length) setLog((prev) => [...prev, ...newLogs]);
+  }
+
+  function findUnitPos(id: string) {
+    const u = initialUnits.current.find((x) => x.id === id);
+    return u?.position ?? null;
   }
 
   function finish() {
@@ -321,7 +395,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
       }
       safeSet(setResult, summary);
     } catch (err) {
-      console.warn('[battle3d] finish/rewards failed', err);
+      console.warn('[playback] finish/rewards failed', err);
       safeSet(setResult, { won: false, gold: 0, exp: 0, damageDealt: 0, healingDone: 0, killCount: 0, unitStats: [] });
     }
   }
@@ -354,8 +428,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     const rest: BattleEvent[] = [];
     while (evIdx.current < evs.length) { rest.push(evs[evIdx.current]); evIdx.current++; }
     if (rest.length) {
-      engineRef.current?.applyEvents(rest);
-      setUnits((prev) => applyEventsToSnapshots(prev, rest));
+      commitBatch(rest);
     }
     setLog(logs.current.slice());
     finish();
@@ -370,6 +443,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     log,
     units,
     result,
+    floats,
     togglePause,
     fastForward,
     advanceTurn,
@@ -378,10 +452,6 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     turnSourceId: turnSourceRef.current,
   };
 }
-
-// -------------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------------
 
 function snapshotOf(u: BattleUnit): UnitSnapshot {
   return {
@@ -438,12 +508,6 @@ function applyEventsToSnapshots(prev: UnitSnapshot[], batch: BattleEvent[]): Uni
       case 'spawn':
         if (ev.unit && !next.some((u) => u.id === ev.unit!.id)) {
           next = [...next, snapshotOf(ev.unit as BattleUnit)];
-        }
-        break;
-      case 'mana':
-        if (ev.targetId && ev.value != null) {
-          const mp = ev.value;
-          patch(ev.targetId, (u) => ({ ...u, mana: Math.max(0, Math.min(u.maxMana, mp)) }));
         }
         break;
       case 'status_apply':
