@@ -5,53 +5,44 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGameStore } from '../store/gameStore';
-import { useBattleReplay, UnitStatLine } from '../hooks/useBattleReplay';
 import { LEVELS } from '../data/levels';
-import { gridForLevel, hexLayout } from '../utils/hex';
+import { gridForLevel } from '../utils/hex';
 import { BattleLogEntry } from '../types';
 import { CHEST_THEMES } from '../data/chests';
-import Arena from '../components/battle/Arena';
-import UnitAvatar from '../components/battle/UnitAvatar';
-import Projectile from '../components/battle/Projectile';
-import BattleStage from '../components/battle/BattleStage';
 import ChestOpening from '../components/ChestOpening';
+import BattleCanvas3D from '../components/battle/BattleCanvas3D';
+import { Engine } from '../game3d/Engine';
+import { usePlayback } from '../game3d/usePlayback';
+import { UnitStatLine } from '../game3d/types';
 import { ScreenBackground, GButton, Panel, Plate, palette, gradients } from '../components/ui';
-
-const FRAME_PAD = 8;
 
 export default function BattleScreen() {
   const { setScreen, clearPlacements, battleSpeed, setBattleSpeed, forfeitBattle, currentLevelId, heroes, equipment } = useGameStore();
   const isArena = currentLevelId === -1;
   const level = isArena ? null : LEVELS.find((l) => l.id === currentLevelId) ?? null;
-  // Set to a chest theme when the player taps "OPEN CHEST"; renders the
-  // chest-opening overlay until the player dismisses it.
   const [revealChest, setRevealChest] = useState<string | null>(null);
 
-  // Live window dimensions — re-renders on rotate / split-screen. Using
-  // Dimensions.get can return stale values on first mount on some devices.
+  // Live window dimensions — re-renders on rotate / split-screen.
   const { width: screenW, height: screenH } = useWindowDimensions();
   const grid = useMemo(() => gridForLevel(level), [level]);
 
-  // Board budget: width minus side padding & frame padding; for small maps
-  // the height is bounded so the combat log stays visible. For siege maps
-  // we let the board grow taller and the user scrolls horizontally inside
-  // the Arena container.
-  const fieldWBudget = Math.max(200, screenW - 20 - FRAME_PAD * 2);
-  const fieldHBudget = grid.size === 'siege'
-    ? Math.min(screenH * 0.45, 340)
-    : Math.min(fieldWBudget * 0.7, 220);
+  // The 3D viewport sizes are larger than the legacy 2D arena so the
+  // battlefield can use proper perspective. We still leave room below
+  // for the combat log + controls.
+  const canvasW = Math.max(220, screenW - 16);
+  const canvasH = grid.size === 'siege'
+    ? Math.min(screenH * 0.5, 380)
+    : Math.min(screenH * 0.42, 320);
 
-  const layout = useMemo(
-    () => hexLayout(fieldWBudget, fieldHBudget, grid),
-    [fieldWBudget, fieldHBudget, grid]
-  );
-  const fieldW = layout.totalW;
-  const fieldH = layout.totalH;
+  // Engine ref shared between the playback hook and the canvas. The
+  // canvas creates the engine asynchronously on its onContextCreate;
+  // the playback hook polls the ref before applying its first batch.
+  const engineRef = useRef<Engine | null>(null);
 
   const {
-    isArena: isArenaReplay, level: levelReplay, phase, units, log, vfx, projectiles, tick, result,
-    getAnims, togglePause, fastForward, advanceTurn, toggleTurnByTurn, turnByTurnActive, turnSourceId,
-  } = useBattleReplay(layout, grid);
+    isArena: isArenaReplay, level: levelReplay, phase, units, log, tick, result,
+    togglePause, fastForward, advanceTurn, toggleTurnByTurn, turnByTurnActive, turnSourceId,
+  } = usePlayback(grid, engineRef);
   const [logFilter, setLogFilter] = useState<'all' | 'crits' | 'heals' | 'abilities' | 'deaths'>('all');
   // Toggle the per-unit damage / heal / taken stats overlay during battle.
   const [showStats, setShowStats] = useState(false);
@@ -90,12 +81,6 @@ export default function BattleScreen() {
     );
   };
 
-  // Pinch-zoom / drag-pan viewport size for the battlefield.
-  const stageW = screenW - 12;
-  const stageH = grid.size === 'siege'
-    ? Math.min(screenH * 0.44, 332)
-    : Math.min(fieldH + FRAME_PAD * 2 + 6, 270);
-
   return (
     <SafeAreaView style={styles.container} edges={['top', 'right', 'left', 'bottom']}>
       <ScreenBackground />
@@ -129,16 +114,18 @@ export default function BattleScreen() {
         <CrownCount tint={palette.red} label="ENEMY" alive={aliveE} total={enemies.length} right />
       </View>
 
-      {/* Arena — pinch to zoom, drag to pan */}
+      {/* Arena — 3D battlefield. Drag to orbit, pinch to zoom,
+          double-tap to recenter. */}
       <View style={styles.arenaArea}>
-        <BattleStage
-          contentWidth={fieldW + FRAME_PAD * 2}
-          contentHeight={fieldH + FRAME_PAD * 2}
-          viewportWidth={stageW}
-          viewportHeight={stageH}
-        >
-          <ArenaCanvas fieldW={fieldW} fieldH={fieldH} layout={layout} units={units} projectiles={projectiles} vfx={vfx} getAnims={getAnims} theme={levelReplay?.theme} obstacles={levelReplay?.obstacles} />
-        </BattleStage>
+        <BattleCanvas3D
+          width={canvasW}
+          height={canvasH}
+          grid={grid}
+          theme={levelReplay?.theme}
+          obstacles={levelReplay?.obstacles}
+          units={units}
+          onEngineReady={(eng) => { engineRef.current = eng; }}
+        />
       </View>
 
       {/* Controls */}
@@ -364,32 +351,6 @@ function UnitStatsTable({ rows, highlightId }: { rows: UnitStatLine[]; highlight
   );
 }
 
-function ArenaCanvas({
-  fieldW, fieldH, layout, units, projectiles, vfx, getAnims, theme, obstacles,
-}: {
-  fieldW: number; fieldH: number;
-  layout: ReturnType<typeof hexLayout>;
-  units: any[]; projectiles: any[]; vfx: any[];
-  getAnims: (id: string) => any;
-  theme?: import('../types').MapTheme;
-  obstacles?: import('../types').Obstacle[];
-}) {
-  return (
-    <View style={{ width: fieldW + FRAME_PAD * 2, height: fieldH + FRAME_PAD * 2 }}>
-      <Arena width={fieldW} height={fieldH} layout={layout} theme={theme} obstacles={obstacles} />
-      <View style={[styles.unitLayer, { left: FRAME_PAD, top: FRAME_PAD, width: fieldW, height: fieldH }]} pointerEvents="none">
-        {units.map((u) => (
-          <UnitAvatar key={u.id} unit={u} anims={getAnims(u.id)} layout={layout}
-            vfx={vfx.filter((v: any) => v.unitId === u.id)} />
-        ))}
-        {projectiles.map((p) => (
-          <Projectile key={p.id} proj={p} layout={layout} />
-        ))}
-      </View>
-    </View>
-  );
-}
-
 function CrownCount({ tint, label, alive, total, right }: { tint: string; label: string; alive: number; total: number; right?: boolean }) {
   return (
     <View style={[styles.crownBox, right && { alignItems: 'flex-end' }]}>
@@ -474,7 +435,6 @@ const styles = StyleSheet.create({
   tickPill: { backgroundColor: palette.panelDeep, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 2, borderWidth: 1, borderColor: '#0007' },
   tickText: { color: palette.textSoft, fontWeight: '800', fontSize: 10, letterSpacing: 1 },
   arenaArea: { alignItems: 'center', paddingVertical: 6 },
-  unitLayer: { position: 'absolute' },
   controls: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, paddingVertical: 4, paddingHorizontal: 10 },
   round: { borderRadius: 22 },
   roundGrad: {
