@@ -10,6 +10,7 @@ import { gridForLevel } from '../utils/hex';
 import { BattleLogEntry } from '../types';
 import { CHEST_THEMES } from '../data/chests';
 import ChestOpening from '../components/ChestOpening';
+import BattleCanvasErrorBoundary from '../components/battle/BattleCanvasErrorBoundary';
 import { usePlayback } from '../game3d/usePlayback';
 import { UnitStatLine } from '../game3d/types';
 import type { Engine } from '../game3d/Engine';
@@ -121,25 +122,29 @@ export default function BattleScreen() {
       </View>
 
       {/* Arena — 3D battlefield. Drag to orbit, pinch to zoom,
-          double-tap to recenter. Wrapped in Suspense so the lazy
-          expo-gl import has time to resolve. */}
+          double-tap to recenter. Lazy-loaded so expo-gl's native-
+          module probe only runs when battle starts; the inline
+          ErrorBoundary catches a missing native link and renders
+          a clear "rebuild required" panel instead of crashing. */}
       <View style={styles.arenaArea}>
-        <Suspense fallback={
-          <View style={{ width: canvasW, height: canvasH, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator size="large" color={palette.gold} />
-            <Text style={{ color: palette.textSoft, marginTop: 10, fontWeight: '700' }}>Loading battlefield…</Text>
-          </View>
-        }>
-          <BattleCanvas3D
-            width={canvasW}
-            height={canvasH}
-            grid={grid}
-            theme={levelReplay?.theme}
-            obstacles={levelReplay?.obstacles}
-            units={units}
-            onEngineReady={(eng) => { engineRef.current = eng; }}
-          />
-        </Suspense>
+        <BattleCanvasErrorBoundary width={canvasW} height={canvasH} onBack={onForfeit}>
+          <Suspense fallback={
+            <View style={{ width: canvasW, height: canvasH, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator size="large" color={palette.gold} />
+              <Text style={{ color: palette.textSoft, marginTop: 10, fontWeight: '700' }}>Loading battlefield…</Text>
+            </View>
+          }>
+            <BattleCanvas3D
+              width={canvasW}
+              height={canvasH}
+              grid={grid}
+              theme={levelReplay?.theme}
+              obstacles={levelReplay?.obstacles}
+              units={units}
+              onEngineReady={(eng) => { engineRef.current = eng; }}
+            />
+          </Suspense>
+        </BattleCanvasErrorBoundary>
       </View>
 
       {/* Controls */}
