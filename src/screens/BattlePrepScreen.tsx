@@ -6,13 +6,17 @@ import {
   useGameStore, getHeroEffectiveStats, computeTeamSynergies, generateArenaWave,
 } from '../store/gameStore';
 import { LEVELS } from '../data/levels';
-import { MiniUnitPortrait } from '../components/battle/UnitAvatar';
-import Arena, { FRAME_PAD } from '../components/battle/Arena';
 import BattleStage from '../components/battle/BattleStage';
 import HeroPortrait from '../components/HeroPortrait';
+import Battlefield from '../game/renderers/Battlefield';
+import UnitSprite from '../game/sprite/UnitSprite';
+import { themeFor } from '../game/themes';
+import { Y_SQUASH } from '../game/math';
 import { gridForLevel, hexLayout, hexCenter, HexLayout } from '../utils/hex';
 import { heroIdOfPlacement, countPlacementsOf } from '../utils/placement';
 import { Screen, TopBar, Panel, GButton, palette } from '../components/ui';
+
+const FRAME_PAD = 8;
 
 type Selection =
   | { kind: 'bench'; heroId: string }
@@ -100,18 +104,25 @@ export default function BattlePrepScreen() {
   const powerOk = !recommended || teamPower >= recommended;
   const spriteRatio = grid.size === 'siege' ? 0.78 : 0.9;
 
-  // Touchable hex overlay aligned to the Arena backdrop.
+  // Touchable hex overlay aligned to the tilted battlefield. Each
+  // cell's Y is squashed by Y_SQUASH so the tap targets sit on top
+  // of the actual rendered tiles.
+  const fieldH = layout.totalH * Y_SQUASH;
+  const tappableW = layout.hexW;
+  const tappableH = layout.hexH * Y_SQUASH;
+  const spriteH = Math.min(layout.hexW, layout.hexH * Y_SQUASH) * (spriteRatio * 1.4);
+
   const cells: React.ReactNode[] = [];
   for (let row = 0; row < grid.rows; row++) {
     for (let col = 0; col < grid.cols; col++) {
       const { cx, cy } = hexCenter({ col, row }, layout);
+      const sy = cy * Y_SQUASH;
       const occKey = occupantAt(col, row);
       const placedHero = occKey ? heroes[heroIdOfPlacement(occKey)] : null;
       const enemyHere = enemyPreview.find((e) => e.position.col === col && e.position.row === row);
       const isPlayer = col <= grid.playerMaxCol;
       const selected = selection?.kind === 'placement' && selection.key === occKey;
       const canDrop = isPlayer && !occKey && selection != null;
-      const spriteH = Math.min(layout.hexW, layout.hexH) * spriteRatio;
       cells.push(
         <TouchableOpacity
           key={`${row}-${col}`}
@@ -119,23 +130,23 @@ export default function BattlePrepScreen() {
           onPress={() => handleCell(col, row)}
           style={{
             position: 'absolute',
-            left: cx - layout.hexW / 2,
-            top: cy - layout.hexH / 2,
-            width: layout.hexW,
-            height: layout.hexH,
+            left: cx - tappableW / 2,
+            top: sy - tappableH / 2,
+            width: tappableW,
+            height: tappableH,
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
           {selected && (
             <View style={{
-              position: 'absolute', width: layout.hexW * 0.92, height: layout.hexH * 0.92,
+              position: 'absolute', width: tappableW * 0.92, height: tappableH * 0.92,
               borderRadius: 10, borderWidth: 2.5, borderColor: palette.gold,
             }} />
           )}
           {canDrop && (
             <View style={{
-              width: layout.hexW * 0.4, height: layout.hexW * 0.4, borderRadius: 999,
+              width: tappableW * 0.4, height: tappableW * 0.4, borderRadius: 999,
               borderWidth: 2, borderColor: palette.gold + 'aa',
               alignItems: 'center', justifyContent: 'center',
             }}>
@@ -143,11 +154,32 @@ export default function BattlePrepScreen() {
             </View>
           )}
           {placedHero ? (
-            <MiniUnitPortrait icon={placedHero.icon} heroClass={placedHero.heroClass}
-              isPlayer size={spriteH} stars={0} />
+            // Render the sprite anchored to the tile's bottom so the
+            // "feet" line up with the tile center, matching how the
+            // engine renders the same unit in battle.
+            <View style={{
+              position: 'absolute',
+              left: tappableW / 2 - spriteH / 2,
+              top: tappableH / 2 - spriteH * 0.78,
+              width: spriteH, height: spriteH,
+            }}>
+              <UnitSprite heroClass={placedHero.heroClass} isPlayer size={spriteH} />
+            </View>
           ) : enemyHere ? (
-            <MiniUnitPortrait icon={enemyHere.icon} heroClass={enemyHere.heroClass}
-              isPlayer={false} size={spriteH} stars={enemyHere.stars} />
+            <View style={{
+              position: 'absolute',
+              left: tappableW / 2 - spriteH / 2,
+              top: tappableH / 2 - spriteH * 0.78,
+              width: spriteH, height: spriteH,
+            }}>
+              <UnitSprite
+                heroClass={enemyHere.heroClass}
+                isPlayer={false}
+                size={spriteH}
+                facing={-1}
+                stars={enemyHere.stars}
+              />
+            </View>
           ) : null}
         </TouchableOpacity>
       );
@@ -157,7 +189,7 @@ export default function BattlePrepScreen() {
   const stageW = screenW - 16;
   const stageH = grid.size === 'siege'
     ? Math.min(screenH * 0.34, 280)
-    : Math.min(layout.totalH + FRAME_PAD * 2 + 4, 244);
+    : Math.min(fieldH + FRAME_PAD * 2 + 4, 244);
 
   return (
     <Screen>
@@ -218,17 +250,26 @@ export default function BattlePrepScreen() {
       <View style={styles.arenaWrap}>
         <BattleStage
           contentWidth={layout.totalW + FRAME_PAD * 2}
-          contentHeight={layout.totalH + FRAME_PAD * 2}
+          contentHeight={fieldH + FRAME_PAD * 2}
           viewportWidth={stageW}
           viewportHeight={stageH}
         >
-          <View style={{ width: layout.totalW + FRAME_PAD * 2, height: layout.totalH + FRAME_PAD * 2 }}>
-            <Arena width={layout.totalW} height={layout.totalH} layout={layout}
-              theme={level?.theme} obstacles={level?.obstacles} />
+          <View style={{ width: layout.totalW + FRAME_PAD * 2, height: fieldH + FRAME_PAD * 2 }}>
             <View style={{
               position: 'absolute', left: FRAME_PAD, top: FRAME_PAD,
-              width: layout.totalW, height: layout.totalH,
+              width: layout.totalW, height: fieldH,
+              borderRadius: 14, overflow: 'hidden',
+              borderWidth: 2, borderColor: palette.goldDeep,
             }}>
+              {/* New 2.5D battlefield — same renderer the engine uses
+                  in battle, so the prep view and the fight view match. */}
+              <Battlefield
+                layout={layout}
+                theme={themeFor(level?.theme)}
+                obstacles={level?.obstacles}
+                width={layout.totalW}
+                height={fieldH}
+              />
               {cells}
             </View>
           </View>
