@@ -1,16 +1,27 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, ChestReward } from '../store/gameStore';
+import { CHEST_THEMES, ChestKind } from '../data/chests';
+import ChestOpening from '../components/ChestOpening';
 import {
   Screen, TopBar, Panel, GButton, Bar, CurrencyBar, palette, spacing,
 } from '../components/ui';
 import { gradients } from '../theme';
 
+function chestKindForReward(r: { gold?: number; gems?: number; itemId?: string }): ChestKind {
+  const score = (r.gold ?? 0) + (r.gems ?? 0) * 30 + (r.itemId ? 500 : 0);
+  if (score >= 3000) return 'mythic';
+  if (score >= 1200) return 'gold';
+  if (score >= 400) return 'silver';
+  return 'wooden';
+}
+
 export default function DailyScreen() {
   const {
     setScreen, dailyQuests, dailyQuestProgress, claimDailyQuest,
-    dailyResetAt, loginStreak, gold, gems,
+    dailyResetAt, loginStreak, gold, gems, heroes, equipment,
   } = useGameStore();
+  const [reveal, setReveal] = useState<{ kind: ChestKind; reward: ChestReward; id: number } | null>(null);
 
   const msLeft = Math.max(0, dailyResetAt - Date.now());
   const hours = Math.floor(msLeft / 3_600_000);
@@ -42,16 +53,30 @@ export default function DailyScreen() {
                   <Bar pct={pct} colors={gradients.banner} height={8} style={{ marginTop: 6 }} />
                   <Text style={styles.progressText}>{Math.min(ap.progress, q.goal)} / {q.goal}</Text>
                   <Text style={styles.reward}>
-                    {q.reward.gold ? `🪙 ${q.reward.gold}` : ''}{q.reward.gems ? `   💎 ${q.reward.gems}` : ''}
+                    🎁 {q.reward.gold ? `🪙 ${q.reward.gold}` : ''}{q.reward.gems ? `   💎 ${q.reward.gems}` : ''}
                   </Text>
                 </View>
                 <GButton small disabled={!ready} variant={ready ? 'green' : 'purple'}
-                  label={ap.claimed ? '✓' : ready ? 'CLAIM' : '—'} onPress={() => claimDailyQuest(q.id)} />
+                  label={ap.claimed ? '✓' : ready ? 'CLAIM' : '—'}
+                  onPress={() => {
+                    const r = claimDailyQuest(q.id);
+                    if (r) setReveal({ kind: chestKindForReward(q.reward), reward: r, id: Date.now() });
+                  }} />
               </View>
             </Panel>
           );
         })}
       </ScrollView>
+      {reveal && (
+        <ChestOpening
+          key={reveal.id}
+          theme={CHEST_THEMES[reveal.kind]}
+          reward={reveal.reward}
+          heroes={heroes}
+          equipment={equipment}
+          onClose={() => setReveal(null)}
+        />
+      )}
     </Screen>
   );
 }

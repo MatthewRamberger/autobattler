@@ -23,14 +23,14 @@ export default function HeroCard({ hero, onPress, selected, compact }: Props) {
     >
       <HeroPortrait
         size={52} heroClass={hero.heroClass} rarity={hero.rarity} icon={hero.icon}
-        element={hero.baseStats.element} seed={hero.portraitSeed} stars={hero.stars}
+        element={hero.baseStats.element} seed={hero.portraitSeed} level={hero.level}
         selected={selected} showFrame={false}
       />
       <View style={styles.info}>
         <Text style={[styles.name, { color: grad[0] }]} numberOfLines={1}>{hero.name}</Text>
         <Text style={styles.class}>{hero.heroClass}</Text>
         <View style={styles.levelRow}>
-          <Text style={styles.level}>Lv.{hero.level}</Text>
+          <Text style={styles.level}>T{hero.level}</Text>
           {!compact && (
             <LinearGradient colors={grad} style={styles.rarityBadge}>
               <Text style={styles.rarityText}>{hero.rarity.toUpperCase()}</Text>

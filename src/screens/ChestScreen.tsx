@@ -2,59 +2,41 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGameStore, ChestReward } from '../store/gameStore';
+import { CHEST_THEMES, CHEST_SHOP_COST, ChestKind, ChestTheme } from '../data/chests';
 import { Screen, TopBar, Panel, GButton, CurrencyBar, palette, spacing } from '../components/ui';
-import ChestOpening, { ChestTheme } from '../components/ChestOpening';
+import ChestOpening from '../components/ChestOpening';
 
-interface ChestDef extends ChestTheme {
-  icon: string;
+interface ChestEntry {
+  kind: ChestKind;
+  theme: ChestTheme;
   desc: string;
-  cost: { gold?: number; gems?: number };
-  variant: 'gold' | 'blue' | 'purple';
 }
 
-const CHESTS: ChestDef[] = [
-  {
-    id: 'wooden', name: 'Wooden Chest', icon: '📦',
-    desc: '2 items · 1 hero card · mostly common.',
-    cost: { gold: 200 }, variant: 'gold',
-    wood: ['#b07a44', '#7a4a22', '#3e2410'], metal: '#8a7450', glow: '#d0a868',
-  },
-  {
-    id: 'silver', name: 'Silver Chest', icon: '🎁',
-    desc: '3 items · 2 hero cards · rares guaranteed.',
-    cost: { gold: 800 }, variant: 'blue',
-    wood: ['#aab6c6', '#6e7c8c', '#3a4452'], metal: '#d2dce8', glow: '#bcd4ee',
-  },
-  {
-    id: 'gold', name: 'Golden Chest', icon: '🏆',
-    desc: '4 items · 3 hero cards · legendary 25%.',
-    cost: { gems: 30 }, variant: 'gold',
-    wood: ['#f2cc66', '#cc9c2c', '#7a5810'], metal: '#ffe9a4', glow: '#ffd24a',
-  },
-  {
-    id: 'mythic', name: 'Mythic Chest', icon: '💠',
-    desc: '5 items · 4 hero cards · mythic 20%.',
-    cost: { gems: 100 }, variant: 'purple',
-    wood: ['#b483ea', '#7a3fd0', '#3a1c70'], metal: '#dcc0ff', glow: '#c79bff',
-  },
+const CHESTS: ChestEntry[] = [
+  { kind: 'wooden', theme: CHEST_THEMES.wooden, desc: 'Cheap & cheerful — mostly common loot, gold most of the time.' },
+  { kind: 'silver', theme: CHEST_THEMES.silver, desc: 'A bigger haul — rares are likely, gems sometimes.' },
+  { kind: 'gold',   theme: CHEST_THEMES.gold,   desc: 'Premium tier — epics & legendaries become realistic.' },
+  { kind: 'mythic', theme: CHEST_THEMES.mythic, desc: 'Top tier — mythics roll, gems and legendaries common.' },
 ];
 
 export default function ChestScreen() {
   const { setScreen, gold, gems, openMysteryChest, equipment, heroes } = useGameStore();
   const [busy, setBusy] = useState(false);
-  const [opening, setOpening] = useState<{ theme: ChestDef; reward: ChestReward; id: number } | null>(null);
+  const [opening, setOpening] = useState<{ theme: ChestTheme; reward: ChestReward; id: number } | null>(null);
 
-  async function handleOpen(chest: ChestDef) {
-    if (chest.cost.gold && gold < chest.cost.gold) { Alert.alert('Not enough gold'); return; }
-    if (chest.cost.gems && gems < chest.cost.gems) { Alert.alert('Not enough gems'); return; }
+  async function handleBuy(entry: ChestEntry) {
+    const cost = CHEST_SHOP_COST[entry.kind];
+    if (cost.gold && gold < cost.gold) { Alert.alert('Not enough gold'); return; }
+    if (cost.gems && gems < cost.gems) { Alert.alert('Not enough gems'); return; }
     setBusy(true);
-    const reward = await openMysteryChest(chest.id as any);
+    const reward = await openMysteryChest(entry.kind);
     setBusy(false);
-    if (reward.items.length === 0 && reward.heroCards.length === 0) {
+    const empty = reward.items.length === 0 && reward.heroCards.length === 0 && reward.gold === 0 && reward.gems === 0;
+    if (empty) {
       Alert.alert('Could not open chest');
       return;
     }
-    setOpening({ theme: chest, reward, id: Date.now() });
+    setOpening({ theme: entry.theme, reward, id: Date.now() });
   }
 
   return (
@@ -62,28 +44,30 @@ export default function ChestScreen() {
       <TopBar title="CHESTS" onBack={() => setScreen('home')} right={<CurrencyBar gold={gold} gems={gems} />} />
       <ScrollView contentContainerStyle={{ padding: 14 }} showsVerticalScrollIndicator={false}>
         <Text style={styles.intro}>
-          Crack chests for gear, gold and hero cards. Combine matching cards to rank up your heroes.
+          Crack chests for gold, gems, hero cards and gear. Nothing is guaranteed — but gold is in
+          most. Rarer heroes are rarer.
         </Text>
         {CHESTS.map((c) => {
+          const cost = CHEST_SHOP_COST[c.kind];
           const affordable =
-            (!c.cost.gold || gold >= c.cost.gold) && (!c.cost.gems || gems >= c.cost.gems);
+            (!cost.gold || gold >= cost.gold) && (!cost.gems || gems >= cost.gems);
           return (
-            <Panel key={c.id} style={{ marginBottom: spacing.md }}>
+            <Panel key={c.kind} style={{ marginBottom: spacing.md }}>
               <View style={styles.row}>
-                <View style={[styles.chestBadge, { shadowColor: c.glow }]}>
-                  <LinearGradient colors={c.wood} style={styles.chestBadgeBg}>
-                    <Text style={styles.chestIcon}>{c.icon}</Text>
+                <View style={[styles.chestBadge, { shadowColor: c.theme.glow }]}>
+                  <LinearGradient colors={c.theme.wood} style={styles.chestBadgeBg}>
+                    <Text style={styles.chestIcon}>{c.theme.icon}</Text>
                   </LinearGradient>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.chestName, { color: c.glow }]}>{c.name}</Text>
+                  <Text style={[styles.chestName, { color: c.theme.glow }]}>{c.theme.name}</Text>
                   <Text style={styles.chestDesc}>{c.desc}</Text>
                   <Text style={styles.cost}>
-                    {c.cost.gold ? `🪙 ${c.cost.gold}` : ''}{c.cost.gems ? `💎 ${c.cost.gems}` : ''}
+                    {cost.gold ? `🪙 ${cost.gold}` : ''}{cost.gems ? `💎 ${cost.gems}` : ''}
                   </Text>
                 </View>
-                <GButton small variant={c.variant} disabled={busy || !affordable}
-                  label={busy ? '…' : 'OPEN'} onPress={() => handleOpen(c)} />
+                <GButton small variant={c.theme.variant} disabled={busy || !affordable}
+                  label={busy ? '…' : 'BUY'} onPress={() => handleBuy(c)} />
               </View>
             </Panel>
           );

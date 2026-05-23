@@ -13,7 +13,7 @@ export const ACHIEVEMENTS: Achievement[] = [
     goal: 10000, reward: { gold: 500, gems: 10 } },
   { id: 'unlock_5_heroes', name: 'Collector', description: 'Unlock 5 heroes.', icon: '🦸',
     goal: 5, reward: { gold: 500, gems: 15 } },
-  { id: 'forge_5', name: 'Master Smith', description: 'Forge equipment to +5.', icon: '🔨',
+  { id: 'forge_5', name: 'Master Smith', description: 'Combine equipment to Tier 5.', icon: '🔨',
     goal: 1, reward: { gold: 800, gems: 20, itemId: 'amulet_void' } },
   { id: 'arena_10', name: 'Gladiator', description: 'Reach arena wave 10.', icon: '🏟️',
     goal: 10, reward: { gold: 600, gems: 15 } },

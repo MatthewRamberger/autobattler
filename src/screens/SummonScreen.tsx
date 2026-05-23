@@ -77,7 +77,7 @@ export default function SummonScreen() {
             <Panel glow={sg[0]} style={styles.resultCard}>
               <Text style={styles.resultTitle}>✦ {result.isNew ? 'NEW HERO' : 'HERO CARD'} ✦</Text>
               <HeroPortrait size={120} heroClass={summoned.heroClass} rarity={summoned.rarity} icon={summoned.icon}
-                element={summoned.baseStats.element} seed={summoned.portraitSeed} level={summoned.level} stars={summoned.stars} />
+                element={summoned.baseStats.element} seed={summoned.portraitSeed} level={summoned.level} />
               <Text style={[styles.resultName, { color: sg[0] }]}>{summoned.name}</Text>
               <Text style={styles.resultClass}>{summoned.heroClass} · {summoned.rarity.toUpperCase()}</Text>
               <View style={[styles.cardBadge, { borderColor: sg[0] }]}>

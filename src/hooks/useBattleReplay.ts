@@ -6,6 +6,7 @@ import {
 import { computeBattle, buildPlayerUnit, buildEnemyUnit } from '../utils/battleEngine';
 import { LEVELS } from '../data/levels';
 import { useGameStore, getHeroEffectiveStats, generateArenaWave } from '../store/gameStore';
+import { chestForArenaWave, chestForDifficulty } from '../data/chests';
 import { HEX_COLS, HEX_ROWS, HexGrid, HexLayout, hexCenter } from '../utils/hex';
 import { heroIdOfPlacement } from '../utils/placement';
 
@@ -83,6 +84,10 @@ export interface BattleResultSummary {
   won: boolean; gold: number; exp: number; drop?: string;
   damageDealt: number; healingDone: number; killCount: number;
   unitStats: UnitStatLine[];
+  // Victory chest (if won) — the reward has already been applied to the
+  // store; the chest opening UI plays purely as reveal animation.
+  chest?: import('../store/gameStore').ChestReward;
+  chestKind?: import('../data/chests').ChestKind;
 }
 
 export type Phase = 'running' | 'paused' | 'done' | 'turn-wait';
@@ -359,7 +364,7 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
           maxMana: stats.maxMana, manaRegen: stats.manaRegen,
           element: stats.element, resistance: stats.resistance,
           position: pos, icon: hero.icon, portraitSeed: hero.portraitSeed,
-          stars: hero.stars, abilityId: hero.abilityId,
+          stars: 0, abilityId: hero.abilityId,
         });
         u.mana = Math.min(u.maxMana, u.mana + sanctumMana);
         return [u];
@@ -725,21 +730,34 @@ export function useBattleReplay(layout: HexLayout, grid: HexGrid) {
         healingDone: u.healingDone, killCount: u.killCount,
       }));
 
+      // Bookkeeping + (on loss) consolation gold first. The victory chest
+      // covers all of the actual loot.
+      const { rewardChest } = useGameStore.getState();
+
       let summary: BattleResultSummary;
       if (isArena) {
         const gold = won ? 30 + arenaWave * 15 : 5;
         const exp = won ? 20 + arenaWave * 10 : 5;
         applyBattleRewards(won, gold, exp, heroIds, { damage: dmg, kills });
-        if (won) setArenaWave(arenaWave + 1);
-        summary = { won, gold, exp, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats };
+        if (won) {
+          const kind = chestForArenaWave(arenaWave);
+          const chest = rewardChest(kind);
+          setArenaWave(arenaWave + 1);
+          summary = { won, gold: chest.gold, exp, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats, chest, chestKind: kind };
+        } else {
+          summary = { won, gold, exp, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats };
+        }
       } else if (level) {
-        const drops = level.rewards.possibleDrops;
-        const drop = drops[Math.floor(Math.random() * drops.length)];
-        const actualDrop = Math.random() < (won ? 0.55 : 0.1) ? drop : undefined;
         const gold = won ? level.rewards.gold : Math.floor(level.rewards.gold * 0.25);
         const exp = won ? level.rewards.experience : Math.floor(level.rewards.experience * 0.1);
-        applyBattleRewards(won, gold, exp, heroIds, { damage: dmg, kills }, actualDrop);
-        summary = { won, gold, exp, drop: actualDrop, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats };
+        applyBattleRewards(won, gold, exp, heroIds, { damage: dmg, kills });
+        if (won) {
+          const kind = chestForDifficulty(level.difficulty);
+          const chest = rewardChest(kind);
+          summary = { won, gold: chest.gold, exp, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats, chest, chestKind: kind };
+        } else {
+          summary = { won, gold, exp, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats };
+        }
       } else {
         summary = { won, gold: 0, exp: 0, damageDealt: dmg, healingDone: heal, killCount: kills, unitStats };
       }

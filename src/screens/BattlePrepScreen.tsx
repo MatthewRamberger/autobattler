@@ -144,7 +144,7 @@ export default function BattlePrepScreen() {
           )}
           {placedHero ? (
             <MiniUnitPortrait icon={placedHero.icon} heroClass={placedHero.heroClass}
-              isPlayer size={spriteH} stars={placedHero.stars} />
+              isPlayer size={spriteH} stars={0} />
           ) : enemyHere ? (
             <MiniUnitPortrait icon={enemyHere.icon} heroClass={enemyHere.heroClass}
               isPlayer={false} size={spriteH} stars={enemyHere.stars} />
@@ -248,30 +248,53 @@ export default function BattlePrepScreen() {
 
       <View style={styles.benchWrap}>
         <Text style={styles.benchTitle}>
-          YOUR ROSTER — tap a card, then a glowing tile · place duplicates to field a squad
+          YOUR CARDS — each tile is one card. Tap a card, then a glowing tile to deploy.
         </Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 10, gap: 8 }}>
-          {unlockedHeroes.map((hero) => {
-            const sel = selection?.kind === 'bench' && selection.heroId === hero.id;
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 10, gap: 6 }}>
+          {unlockedHeroes.flatMap((hero) => {
+            // Each available card becomes its own selectable tile so the
+            // multi-deploy economy is visually obvious. A hero with 3
+            // cards renders as 3 tiles; already-placed copies render as
+            // dimmed "ON FIELD" tiles in the same slot.
             const copies = Math.max(1, heroCards[hero.id] ?? 0);
             const placedOf = countPlacementsOf(hero.id, placedKeys);
-            const allPlaced = placedOf >= copies;
             const stats = getHeroEffectiveStats(hero.id, store);
-            return (
-              <TouchableOpacity key={hero.id} activeOpacity={0.85}
-                onPress={() => setSelection(sel ? null : { kind: 'bench', heroId: hero.id })}
-                style={[styles.benchHero, sel && styles.benchSel, allPlaced && { opacity: 0.5 }]}
-              >
-                <HeroPortrait size={54} heroClass={hero.heroClass} rarity={hero.rarity} icon={hero.icon}
-                  element={hero.baseStats.element} seed={hero.portraitSeed} level={hero.level}
-                  stars={hero.stars} selected={sel} />
-                <Text style={styles.benchName} numberOfLines={1}>{hero.name}</Text>
-                <View style={styles.benchRow}>
-                  {stats && <Text style={styles.benchPower}>⚡{stats.power}</Text>}
-                  <Text style={styles.benchCopies}>{placedOf}/{copies}🃏</Text>
-                </View>
-              </TouchableOpacity>
-            );
+            const tiles: React.ReactNode[] = [];
+            for (let idx = 0; idx < copies; idx++) {
+              const isOnField = idx < placedOf;
+              const cardKey = `${hero.id}#card${idx}`;
+              const sel = selection?.kind === 'bench' && selection.heroId === hero.id && !isOnField;
+              tiles.push(
+                <TouchableOpacity
+                  key={cardKey}
+                  activeOpacity={isOnField ? 1 : 0.85}
+                  disabled={isOnField}
+                  onPress={() => setSelection(sel ? null : { kind: 'bench', heroId: hero.id })}
+                  style={[
+                    styles.benchHero,
+                    sel && styles.benchSel,
+                    isOnField && styles.benchPlaced,
+                  ]}
+                >
+                  <HeroPortrait
+                    size={54} heroClass={hero.heroClass} rarity={hero.rarity} icon={hero.icon}
+                    element={hero.baseStats.element} seed={hero.portraitSeed} level={hero.level}
+                    selected={sel} dimmed={isOnField}
+                  />
+                  <Text style={styles.benchName} numberOfLines={1}>{hero.name}</Text>
+                  <View style={styles.benchRow}>
+                    {stats && <Text style={styles.benchPower}>⚡{stats.power}</Text>}
+                    <Text style={styles.benchCopies}>{idx + 1}/{copies}🃏</Text>
+                  </View>
+                  {isOnField && (
+                    <View style={styles.benchPlacedBadge}>
+                      <Text style={styles.benchPlacedText}>ON FIELD</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            }
+            return tiles;
           })}
         </ScrollView>
       </View>
@@ -316,8 +339,15 @@ const styles = StyleSheet.create({
   synCount: { color: palette.green, fontSize: 9, fontWeight: '700' },
   benchWrap: { paddingTop: 6 },
   benchTitle: { color: palette.textMute, fontSize: 9, paddingHorizontal: 12, marginBottom: 6, fontWeight: '700', letterSpacing: 0.5 },
-  benchHero: { backgroundColor: palette.panelDeep, borderRadius: 12, padding: 6, alignItems: 'center', width: 78, borderWidth: 2, borderColor: '#0006' },
+  benchHero: { backgroundColor: palette.panelDeep, borderRadius: 12, padding: 6, alignItems: 'center', width: 78, borderWidth: 2, borderColor: '#0006', position: 'relative' },
   benchSel: { borderColor: palette.gold, backgroundColor: palette.goldDark + '44' },
+  benchPlaced: { opacity: 0.55, borderColor: '#0006', backgroundColor: '#0006' },
+  benchPlacedBadge: {
+    position: 'absolute', top: 4, right: 4,
+    backgroundColor: palette.greenDeep, borderRadius: 5,
+    paddingHorizontal: 4, paddingVertical: 1, borderWidth: 1, borderColor: '#fff8',
+  },
+  benchPlacedText: { color: '#fff', fontSize: 7, fontWeight: '900', letterSpacing: 0.5 },
   benchName: { color: palette.textSoft, fontSize: 9, fontWeight: '700', marginTop: 3 },
   benchRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 1 },
   benchPower: { color: palette.gold, fontSize: 9, fontWeight: '800' },

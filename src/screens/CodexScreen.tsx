@@ -47,7 +47,7 @@ export default function CodexScreen() {
             <Panel key={h.id} style={styles.card}>
               <View style={styles.cardRow}>
                 <HeroPortrait size={60} heroClass={h.heroClass} rarity={h.rarity} icon={h.icon}
-                  element={h.baseStats.element} seed={h.portraitSeed} stars={h.stars} dimmed={!h.unlocked} />
+                  element={h.baseStats.element} seed={h.portraitSeed} level={h.level} dimmed={!h.unlocked} />
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.name, { color: g[0] }]}>{h.unlocked ? h.name : '???'}</Text>
                   <Text style={styles.meta}>{h.heroClass} · {h.baseStats.element} · {h.rarity}</Text>

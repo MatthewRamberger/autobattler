@@ -43,7 +43,7 @@ export const DAILY_QUEST_POOL: DailyQuestDef[] = [
   {
     id: 'daily_forge',
     name: 'Daily Smith',
-    description: 'Forge an upgrade today.',
+    description: 'Combine an equipment tier today.',
     icon: '🔨',
     goal: 0, goalMin: 1, goalMax: 2,
     reward: { gold: 350, gems: 8 },
@@ -51,9 +51,9 @@ export const DAILY_QUEST_POOL: DailyQuestDef[] = [
   {
     id: 'daily_levelup',
     name: 'Daily Trainer',
-    description: 'Level up your heroes today.',
-    icon: '⬆️',
-    goal: 0, goalMin: 2, goalMax: 4,
+    description: 'Combine hero cards today.',
+    icon: '🃏',
+    goal: 0, goalMin: 1, goalMax: 3,
     reward: { gold: 200, gems: 5 },
   },
 ];

@@ -9,18 +9,23 @@ import { useBattleReplay, UnitStatLine } from '../hooks/useBattleReplay';
 import { LEVELS } from '../data/levels';
 import { gridForLevel, hexLayout } from '../utils/hex';
 import { BattleLogEntry } from '../types';
+import { CHEST_THEMES } from '../data/chests';
 import Arena from '../components/battle/Arena';
 import UnitAvatar from '../components/battle/UnitAvatar';
 import Projectile from '../components/battle/Projectile';
 import BattleStage from '../components/battle/BattleStage';
+import ChestOpening from '../components/ChestOpening';
 import { ScreenBackground, GButton, Panel, Plate, palette, gradients } from '../components/ui';
 
 const FRAME_PAD = 8;
 
 export default function BattleScreen() {
-  const { setScreen, clearPlacements, battleSpeed, setBattleSpeed, forfeitBattle, currentLevelId } = useGameStore();
+  const { setScreen, clearPlacements, battleSpeed, setBattleSpeed, forfeitBattle, currentLevelId, heroes, equipment } = useGameStore();
   const isArena = currentLevelId === -1;
   const level = isArena ? null : LEVELS.find((l) => l.id === currentLevelId) ?? null;
+  // Set to a chest theme when the player taps "OPEN CHEST"; renders the
+  // chest-opening overlay until the player dismisses it.
+  const [revealChest, setRevealChest] = useState<string | null>(null);
 
   // Live window dimensions — re-renders on rotate / split-screen. Using
   // Dimensions.get can return stale values on first mount on some devices.
@@ -244,12 +249,33 @@ export default function BattleScreen() {
                   </Plate>
                 )}
 
-                <Plate style={styles.rewards}>
-                  <Text style={styles.reward}>🪙  +{result.gold} Gold</Text>
-                  <Text style={styles.reward}>⭐  +{result.exp} XP</Text>
-                  {result.won && <Text style={styles.reward}>💎  +2 Gems</Text>}
-                  {result.drop && <Text style={[styles.reward, { color: palette.gold }]}>🎁  Item dropped!</Text>}
-                </Plate>
+                {result.won && result.chest && result.chestKind ? (
+                  <View style={styles.chestRow}>
+                    <Text style={styles.chestRowTitle}>VICTORY CHEST</Text>
+                    <ChestRewardBadge
+                      kind={result.chestKind}
+                      onOpen={() => setRevealChest(result.chestKind!)}
+                    />
+                    <View style={styles.chestSummary}>
+                      {result.chest.gold > 0 && <Text style={styles.chestLine}>🪙 +{result.chest.gold} gold</Text>}
+                      {result.chest.gems > 0 && <Text style={styles.chestLine}>💎 +{result.chest.gems} gems</Text>}
+                      {result.chest.heroCards.length > 0 && (
+                        <Text style={styles.chestLine}>
+                          🃏 +{result.chest.heroCards.reduce((s, c) => s + c.qty, 0)} hero card{result.chest.heroCards.reduce((s, c) => s + c.qty, 0) === 1 ? '' : 's'}
+                        </Text>
+                      )}
+                      {result.chest.items.length > 0 && (
+                        <Text style={styles.chestLine}>
+                          🎁 +{result.chest.items.reduce((s, c) => s + c.qty, 0)} item{result.chest.items.reduce((s, c) => s + c.qty, 0) === 1 ? '' : 's'}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                ) : (
+                  <Plate style={styles.rewards}>
+                    <Text style={styles.reward}>🪙  +{result.gold} Gold</Text>
+                  </Plate>
+                )}
               </ScrollView>
               <View style={styles.btnRow}>
                 <GButton label="Retry" variant="purple" onPress={goRetry} style={{ flex: 1 }} />
@@ -259,7 +285,38 @@ export default function BattleScreen() {
           </View>
         </View>
       )}
+
+      {revealChest && result?.chest && (
+        <ChestOpening
+          theme={CHEST_THEMES[revealChest as keyof typeof CHEST_THEMES]}
+          reward={result.chest}
+          heroes={heroes}
+          equipment={equipment}
+          onClose={() => setRevealChest(null)}
+        />
+      )}
     </SafeAreaView>
+  );
+}
+
+function ChestRewardBadge({
+  kind, onOpen,
+}: { kind: import('../data/chests').ChestKind; onOpen: () => void }) {
+  const theme = CHEST_THEMES[kind];
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={onOpen}>
+      <LinearGradient
+        colors={[theme.wood[0], theme.wood[1]] as const}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={[styles.chestBadge, { borderColor: theme.glow, shadowColor: theme.glow }]}
+      >
+        <Text style={styles.chestBadgeIcon}>{theme.icon}</Text>
+        <View>
+          <Text style={[styles.chestBadgeName, { color: theme.glow }]}>{theme.name.toUpperCase()}</Text>
+          <Text style={styles.chestBadgeHint}>TAP TO OPEN</Text>
+        </View>
+      </LinearGradient>
+    </TouchableOpacity>
   );
 }
 
@@ -446,6 +503,19 @@ const styles = StyleSheet.create({
   statLabel: { color: palette.textMute, fontSize: 9, marginTop: 2, letterSpacing: 1, fontWeight: '700' },
   rewards: { width: '100%', gap: 6, marginBottom: 16, alignItems: 'center' },
   reward: { color: palette.textSoft, fontSize: 14, fontWeight: '700' },
+  chestRow: { width: '100%', alignItems: 'center', marginBottom: 16, gap: 8 },
+  chestRowTitle: { color: palette.gold, fontSize: 11, fontWeight: '900', letterSpacing: 2 },
+  chestBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    paddingHorizontal: 18, paddingVertical: 12,
+    borderRadius: 14, borderWidth: 2,
+    shadowOpacity: 0.9, shadowRadius: 10, shadowOffset: { width: 0, height: 0 }, elevation: 8,
+  },
+  chestBadgeIcon: { fontSize: 36 },
+  chestBadgeName: { fontSize: 14, fontWeight: '900', letterSpacing: 1 },
+  chestBadgeHint: { color: '#ffffffcc', fontSize: 10, fontWeight: '800', letterSpacing: 1.5, marginTop: 2 },
+  chestSummary: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 },
+  chestLine: { color: palette.textSoft, fontSize: 12, fontWeight: '700' },
   btnRow: { flexDirection: 'row', gap: 10, width: '100%' },
   statsPanel: { marginHorizontal: 10, marginBottom: 6 },
   unitStatsWrap: { width: '100%', marginBottom: 12, paddingVertical: 8, paddingHorizontal: 8 },

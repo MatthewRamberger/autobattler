@@ -21,7 +21,7 @@ export default function LevelsScreen() {
     setGrinding(levelId);
     const r = await autoResolveLevel(levelId, times);
     setGrinding(null);
-    Alert.alert(`Auto-resolve ×${times}`, `Wins: ${r.wins}\nLosses: ${r.losses}\nGold: +${r.goldGained}\nXP: +${r.expGained}`);
+    Alert.alert(`Auto-resolve ×${times}`, `Wins: ${r.wins}\nLosses: ${r.losses}\nGold: +${r.goldGained}`);
   }
 
   const cleared = Object.values(levelProgress).filter((p) => p.completed).length;
@@ -84,7 +84,6 @@ export default function LevelsScreen() {
 
                     <View style={styles.rewardRow}>
                       <Text style={styles.reward}>🪙 {level.rewards.gold}</Text>
-                      <Text style={styles.reward}>⭐ {level.rewards.experience}</Text>
                       {!!level.recommendedPower && <Text style={styles.reward}>⚡ {level.recommendedPower}</Text>}
                       {level.bossMechanic && !isLocked && (
                         <Text style={styles.boss}>👑 {level.bossMechanic.toUpperCase()}</Text>
