@@ -5,8 +5,6 @@
 
 import { BattleUnit, BattleLogEntry } from '../types';
 
-// A unit as it appears in the live replay. Same shape as BattleUnit;
-// the alias is kept for readability at call sites.
 export type LiveUnit = BattleUnit;
 
 export interface UnitStatLine {
@@ -37,8 +35,7 @@ export interface BattleResultSummary {
 
 export type Phase = 'running' | 'paused' | 'done' | 'turn-wait';
 
-// Snapshot of a unit for the HUD/log layer. We never expose Three.js
-// objects to React — those are owned exclusively by the engine.
+// Snapshot of a unit for the HUD/log layer.
 export interface UnitSnapshot {
   id: string;
   isPlayer: boolean;
@@ -51,7 +48,6 @@ export interface UnitSnapshot {
   damageTaken: number;
   healingDone: number;
   killCount: number;
-  // The legacy fields the existing screen reads:
   name: string;
   heroClass: BattleUnit['heroClass'];
   icon: string;
