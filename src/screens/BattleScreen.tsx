@@ -143,6 +143,7 @@ export default function BattleScreen() {
           units={units}
           floats={floats}
           onEngineReady={(eng) => { engineRef.current = eng; }}
+          highlightId={turnByTurnActive ? turnSourceId : null}
         />
         {/* Transient center banner: battle start / wave incoming. Keyed
             by announcement id so each one replays the pop-in animation. */}
@@ -228,6 +229,7 @@ export default function BattleScreen() {
       {/* Result */}
       {phase === 'done' && result && (
         <View style={styles.overlay}>
+          {result.won && <Confetti />}
           <View style={styles.cardOuter}>
             <LinearGradient
               colors={result.won ? (['#3a2e12', '#221b30'] as const) : (['#3a1620', '#221320'] as const)}
@@ -393,6 +395,61 @@ function CrownCount({
         <View style={[styles.teamHpFill, { width: `${pct * 100}%`, backgroundColor: fill }]} />
       </View>
     </View>
+  );
+}
+
+// Victory confetti — a one-shot burst of falling flakes behind the result
+// card. Each piece precomputes its own trajectory at mount and animates
+// purely on the native driver, so the whole effect is fire-and-forget.
+const CONFETTI_COLORS = ['#ffd24a', '#5ef07a', '#5fa4ff', '#c9a3ff', '#ff8a78', '#fff2a8'];
+
+function Confetti() {
+  const pieces = useRef(
+    Array.from({ length: 18 }, (_, i) => ({
+      x: (i / 18) * 100 + Math.random() * 5,          // % across the screen
+      delay: Math.random() * 500,
+      fall: 320 + Math.random() * 260,
+      drift: (Math.random() - 0.5) * 80,
+      spin: Math.random() > 0.5 ? '360deg' : '-360deg',
+      size: 7 + Math.random() * 6,
+      color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+    }))
+  ).current;
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {pieces.map((p, i) => <ConfettiPiece key={i} {...p} />)}
+    </View>
+  );
+}
+
+function ConfettiPiece({ x, delay, fall, drift, spin, size, color }: {
+  x: number; delay: number; fall: number; drift: number; spin: string; size: number; color: string;
+}) {
+  const t = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.sequence([
+      Animated.delay(delay),
+      Animated.timing(t, { toValue: 1, duration: 1600, useNativeDriver: true }),
+    ]).start();
+  }, []);
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        left: `${x}%`,
+        top: -20,
+        width: size,
+        height: size * 0.6,
+        borderRadius: 2,
+        backgroundColor: color,
+        opacity: t.interpolate({ inputRange: [0, 0.1, 0.8, 1], outputRange: [0, 1, 1, 0] }),
+        transform: [
+          { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [0, fall] }) },
+          { translateX: t.interpolate({ inputRange: [0, 1], outputRange: [0, drift] }) },
+          { rotateZ: t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', spin] }) },
+        ],
+      }}
+    />
   );
 }
 
