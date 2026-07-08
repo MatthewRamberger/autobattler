@@ -82,6 +82,13 @@ export default function BattleCanvas({
   // Per-unit cell size used by the UnitRenderer.
   const cellSize = Math.min(layout.hexW, layout.hexH * Y_SQUASH) * 0.96;
 
+  // O(1) snapshot lookup — `units.find` inside the render maps was
+  // O(units²) per re-render, which bites on siege maps.
+  const snapById = useMemo(() => new Map(units.map((u) => [u.id, u])), [units]);
+  // Name labels crowd each other into an unreadable smear when tiles are
+  // small (siege). Only show them when there's room.
+  const showNames = cellSize >= 30;
+
   // -----------------------------------------------------------------
   // Camera gestures
   // -----------------------------------------------------------------
@@ -171,7 +178,7 @@ export default function BattleCanvas({
 
           {/* Units — sorted back-to-front by the engine. */}
           {snap.units.map((u) => (
-            <UnitRenderer key={u.id} unit={u} cellSize={cellSize} />
+            <UnitRenderer key={u.id} unit={u} cellSize={cellSize} facing={u.facing} alive={u.alive} />
           ))}
 
           {/* Projectiles — in front of units. */}
@@ -180,9 +187,11 @@ export default function BattleCanvas({
           ))}
 
           {/* HP bars — billboarded above each unit, follow the
-              unit's Animated.tx/ty. */}
+              unit's Animated.tx/ty. Dead units drop theirs entirely:
+              a ghosted bar over a corpse is pure clutter. */}
           {snap.units.map((u) => {
-            const snapU = units.find((x) => x.id === u.id);
+            if (!u.alive) return null;
+            const snapU = snapById.get(u.id);
             if (!snapU) return null;
             return (
               <HpBar
@@ -193,11 +202,11 @@ export default function BattleCanvas({
                 mana={snapU.mana}
                 maxMana={snapU.maxMana}
                 isPlayer={u.isPlayer}
-                alive={u.alive}
                 name={snapU.name}
                 icon={snapU.icon}
                 cellSize={cellSize}
                 statuses={snapU.statuses}
+                showName={showNames}
               />
             );
           })}
@@ -247,11 +256,12 @@ export default function BattleCanvas({
 // stays on the native side.
 // ---------------------------------------------------------------------
 function HpBar({
-  anims, hp, maxHp, mana, maxMana, isPlayer, alive, name, icon, cellSize, statuses,
+  anims, hp, maxHp, mana, maxMana, isPlayer, name, icon, cellSize, statuses, showName,
 }: {
   anims: any; hp: number; maxHp: number; mana: number; maxMana: number;
-  isPlayer: boolean; alive: boolean; name: string; icon: string; cellSize: number;
+  isPlayer: boolean; name: string; icon: string; cellSize: number;
   statuses: Array<{ type: string }>;
+  showName: boolean;
 }) {
   const hpPct = Math.max(0, Math.min(1, hp / Math.max(1, maxHp)));
   const mpPct = maxMana > 0 ? Math.max(0, Math.min(1, mana / maxMana)) : 0;
@@ -268,17 +278,18 @@ function HpBar({
         width: w,
         alignItems: 'center',
         transform: [{ translateX: anims.tx }, { translateY: anims.ty }],
-        opacity: alive ? 1 : 0.4,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 1 }}>
-        <Text style={{
-          color: tone, fontSize: 9, fontWeight: '800',
-          textShadowColor: '#000a', textShadowRadius: 2, letterSpacing: 0.3,
-        }} numberOfLines={1}>
-          {icon} {name}
-        </Text>
-      </View>
+      {showName && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 1 }}>
+          <Text style={{
+            color: tone, fontSize: 9, fontWeight: '800',
+            textShadowColor: '#000a', textShadowRadius: 2, letterSpacing: 0.3,
+          }} numberOfLines={1}>
+            {icon} {name}
+          </Text>
+        </View>
+      )}
       <View style={{
         width: '100%', height: 5, borderRadius: 3,
         backgroundColor: '#0009', borderWidth: 1, borderColor: '#0008',

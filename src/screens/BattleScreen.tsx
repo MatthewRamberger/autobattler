@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Alert,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, useWindowDimensions, Alert, Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -42,7 +42,7 @@ export default function BattleScreen() {
   const {
     isArena: isArenaReplay, level: levelReplay, phase, units, log, tick, result,
     togglePause, fastForward, advanceTurn, toggleTurnByTurn, turnByTurnActive, turnSourceId,
-    floats,
+    floats, wave, totalWaves, announcement,
   } = usePlayback(grid, engineRef);
   const [logFilter, setLogFilter] = useState<'all' | 'crits' | 'heals' | 'abilities' | 'deaths'>('all');
   // Toggle the per-unit damage / heal / taken stats overlay during battle.
@@ -57,6 +57,13 @@ export default function BattleScreen() {
   const enemies = units.filter((u) => !u.isPlayer);
   const aliveP = players.filter((u) => u.isAlive).length;
   const aliveE = enemies.filter((u) => u.isAlive).length;
+  // Aggregate team health: sum of remaining HP over sum of max HP. Dead
+  // units contribute 0 to the numerator so the bar drains as the team dies.
+  const teamHpPct = (list: typeof units) => {
+    const total = list.reduce((s, u) => s + u.maxHp, 0);
+    if (!total) return 0;
+    return list.reduce((s, u) => s + (u.isAlive ? u.hp : 0), 0) / total;
+  };
 
   const filteredLog = log.filter((e) => {
     if (logFilter === 'all') return true;
@@ -93,26 +100,33 @@ export default function BattleScreen() {
             <Text style={styles.exitChevron}>‹</Text>
           </LinearGradient>
         </TouchableOpacity>
-        <CrownCount tint={palette.blue} label="ALLIES" alive={aliveP} total={players.length} />
+        <CrownCount tint={palette.blue} label="ALLIES" alive={aliveP} total={players.length} hpPct={teamHpPct(players)} />
         <View style={styles.hudCenter}>
           <LinearGradient colors={gradients.banner} style={styles.banner}>
             <Text style={styles.bannerText} numberOfLines={1}>
               {isArenaReplay ? 'ARENA WAVE' : (levelReplay?.name ?? 'BATTLE')}
             </Text>
           </LinearGradient>
-          <View style={styles.tickPill}>
-            <Text style={styles.tickText}>
-              {phase === 'paused'
-                ? '⏸ PAUSED'
-                : phase === 'turn-wait'
-                  ? `▷ TAP NEXT · ⏱ ${tick}`
-                  : phase === 'done'
-                    ? (result?.won ? '🏆 VICTORY' : '☠ DEFEAT')
-                    : `⏱ ${tick}`}
-            </Text>
+          <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+            <View style={styles.tickPill}>
+              <Text style={styles.tickText}>
+                {phase === 'paused'
+                  ? '⏸ PAUSED'
+                  : phase === 'turn-wait'
+                    ? `▷ TAP NEXT · ⏱ ${tick}`
+                    : phase === 'done'
+                      ? (result?.won ? '🏆 VICTORY' : '☠ DEFEAT')
+                      : `⏱ ${tick}`}
+              </Text>
+            </View>
+            {totalWaves > 1 && (
+              <View style={[styles.tickPill, { borderColor: palette.purple }]}>
+                <Text style={[styles.tickText, { color: '#c9a3ff' }]}>🌊 {wave}/{totalWaves}</Text>
+              </View>
+            )}
           </View>
         </View>
-        <CrownCount tint={palette.red} label="ENEMY" alive={aliveE} total={enemies.length} right />
+        <CrownCount tint={palette.red} label="ENEMY" alive={aliveE} total={enemies.length} hpPct={teamHpPct(enemies)} right />
       </View>
 
       {/* Arena — 2.5D battlefield. Drag to pan, pinch to zoom,
@@ -130,6 +144,11 @@ export default function BattleScreen() {
           floats={floats}
           onEngineReady={(eng) => { engineRef.current = eng; }}
         />
+        {/* Transient center banner: battle start / wave incoming. Keyed
+            by announcement id so each one replays the pop-in animation. */}
+        {announcement && (
+          <AnnounceBanner key={announcement.id} text={announcement.text} />
+        )}
       </View>
 
       {/* Controls */}
@@ -314,6 +333,11 @@ function ChestRewardBadge({
 function UnitStatsTable({ rows, highlightId }: { rows: UnitStatLine[]; highlightId?: string }) {
   const players = rows.filter((r) => r.isPlayer);
   const enemies = rows.filter((r) => !r.isPlayer);
+  // MVP: the hero with the biggest damage total gets a crown.
+  const mvpId = players.reduce<UnitStatLine | null>(
+    (best, u) => (u.damageDealt > 0 && (!best || u.damageDealt > best.damageDealt) ? u : best),
+    null
+  )?.id;
   return (
     <View>
       {[{ team: 'ALLIES', list: players, color: palette.blue },
@@ -339,7 +363,7 @@ function UnitStatsTable({ rows, highlightId }: { rows: UnitStatLine[]; highlight
                 <View style={[styles.tableTeam, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
                   <Text style={{ fontSize: 12 }}>{u.icon}</Text>
                   <Text style={styles.tableName} numberOfLines={1}>
-                    {u.isAlive ? u.name : `† ${u.name}`}
+                    {mvpId === u.id ? '👑 ' : ''}{u.isAlive ? u.name : `† ${u.name}`}
                   </Text>
                 </View>
                 <Text style={[styles.tableValue, { flex: 0.85, color: '#ffd24a' }]}>{u.damageDealt}</Text>
@@ -355,12 +379,45 @@ function UnitStatsTable({ rows, highlightId }: { rows: UnitStatLine[]; highlight
   );
 }
 
-function CrownCount({ tint, label, alive, total, right }: { tint: string; label: string; alive: number; total: number; right?: boolean }) {
+function CrownCount({
+  tint, label, alive, total, hpPct, right,
+}: { tint: string; label: string; alive: number; total: number; hpPct: number; right?: boolean }) {
+  const pct = Math.max(0, Math.min(1, hpPct));
+  const fill = pct < 0.35 ? '#ff5d3c' : pct < 0.65 ? '#ffae3a' : '#5ef07a';
   return (
     <View style={[styles.crownBox, right && { alignItems: 'flex-end' }]}>
       <Text style={[styles.crownLabel, { color: tint }]}>{label}</Text>
       <Text style={styles.crownCount}>{alive}<Text style={styles.crownTotal}>/{total}</Text></Text>
+      {/* Aggregate team-health bar — a battle-momentum readout at a glance. */}
+      <View style={[styles.teamHpTrack, { borderColor: tint + '55' }]}>
+        <View style={[styles.teamHpFill, { width: `${pct * 100}%`, backgroundColor: fill }]} />
+      </View>
     </View>
+  );
+}
+
+// Center-screen battle announcement ("BATTLE START", "WAVE 2 INCOMING").
+// Self-contained native-driver pop-in + fade; the playback hook clears
+// the announcement after ~1.9s which unmounts this.
+function AnnounceBanner({ text }: { text: string }) {
+  const scale = useRef(new Animated.Value(0.6)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scale, { toValue: 1, friction: 6, tension: 120, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+    ]).start();
+    const t = setTimeout(() => {
+      Animated.timing(opacity, { toValue: 0, duration: 280, useNativeDriver: true }).start();
+    }, 1350);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <Animated.View pointerEvents="none" style={[styles.announceWrap, { opacity, transform: [{ scale }] }]}>
+      <LinearGradient colors={gradients.banner} style={styles.announceBanner}>
+        <Text style={styles.announceText}>{text}</Text>
+      </LinearGradient>
+    </Animated.View>
   );
 }
 
@@ -430,10 +487,31 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: palette.goldDeep,
   },
   exitChevron: { color: palette.gold, fontSize: 22, fontWeight: '900', marginTop: -2 },
-  crownBox: { width: 56 },
+  crownBox: { width: 62 },
   crownLabel: { fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
   crownCount: { color: '#fff', fontSize: 18, fontWeight: '900' },
   crownTotal: { color: palette.textMute, fontSize: 11, fontWeight: '800' },
+  teamHpTrack: {
+    width: 56, height: 5, borderRadius: 3, marginTop: 2,
+    backgroundColor: '#0009', borderWidth: 1, overflow: 'hidden',
+  },
+  teamHpFill: { height: '100%' },
+  announceWrap: {
+    position: 'absolute',
+    top: '38%',
+    alignSelf: 'center',
+    zIndex: 10,
+  },
+  announceBanner: {
+    paddingHorizontal: 22, paddingVertical: 9,
+    borderRadius: 14, borderWidth: 2, borderColor: '#fff8',
+    shadowColor: '#000', shadowOpacity: 0.6, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 }, elevation: 10,
+  },
+  announceText: {
+    color: '#5a3c08', fontSize: 17, fontWeight: '900', letterSpacing: 1.5,
+    textShadowColor: '#fff7', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1,
+  },
   banner: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 2, borderColor: '#fff6' },
   bannerText: { color: '#5a3c08', fontWeight: '900', fontSize: 12, letterSpacing: 0.5 },
   tickPill: { backgroundColor: palette.panelDeep, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 2, borderWidth: 1, borderColor: '#0007' },

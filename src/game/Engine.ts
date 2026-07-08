@@ -127,8 +127,18 @@ export class Engine {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
+  // Coalesce notifications into one per frame. A single damage event can
+  // spawn 6-9 particles, each of which notifies again when it expires —
+  // without batching, every burst forces several full React re-renders
+  // of the canvas (painful on siege maps with 50+ units).
+  private notifyScheduled = false;
   private notify() {
-    for (const fn of this.listeners) fn();
+    if (this.notifyScheduled) return;
+    this.notifyScheduled = true;
+    requestAnimationFrame(() => {
+      this.notifyScheduled = false;
+      for (const fn of this.listeners) fn();
+    });
   }
 
   // -------------------------------------------------------------------
@@ -193,39 +203,78 @@ export class Engine {
     if (!u || !u.alive) return;
     const next = projectCell(to, this.layout);
     if (Math.abs(next.x - (u.anims.tx as any)._value) > 0.01) {
-      u.facing = next.x > (u.anims.tx as any)._value ? 1 : -1;
+      const face = next.x > (u.anims.tx as any)._value ? 1 : -1;
+      if (face !== u.facing) {
+        u.facing = face;
+        this.notify(); // flip immediately, not only when the tween lands
+      }
     }
     u.gridPos = { ...to };
     u.depth = next.depth;
+    if (durMs <= 0) {
+      // Instant snap — used by fast-forward so we don't queue hundreds
+      // of concurrent tweens.
+      u.anims.tx.setValue(next.x);
+      u.anims.ty.setValue(next.y);
+      this.notify();
+      return;
+    }
     Animated.parallel([
       Animated.timing(u.anims.tx, { toValue: next.x, duration: durMs, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       Animated.timing(u.anims.ty, { toValue: next.y, duration: durMs, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
     ]).start(() => this.notify()); // notify on completion so the back-to-front sort updates
   }
 
-  attack(id: string, targetGridPos: GridPosition | null, isProjectile: boolean) {
+  // `targetId` (not a grid position) so facing is computed against the
+  // target's LIVE animated position — resolving from stale initial grid
+  // positions made units face where enemies started, not where they are.
+  attack(id: string, targetId: string | null, isProjectile: boolean) {
     const u = this.units.get(id);
     if (!u || !u.alive) return;
-    // Face target.
-    if (targetGridPos) {
-      const target = projectCell(targetGridPos, this.layout);
-      u.facing = target.x > (u.anims.tx as any)._value ? 1 : -1;
+    // Face target using both entities' current animated screen X.
+    const target = targetId ? this.units.get(targetId) : null;
+    if (target) {
+      const tx = (target.anims.tx as any)._value as number;
+      const ux = (u.anims.tx as any)._value as number;
+      if (Math.abs(tx - ux) > 0.01) {
+        const face = tx > ux ? 1 : -1;
+        if (face !== u.facing) {
+          u.facing = face;
+          this.notify(); // facing is a plain prop — renderer needs a re-render
+        }
+      }
     }
-    // Weapon swing + forward lunge.
-    Animated.sequence([
-      Animated.parallel([
-        Animated.timing(u.anims.weaponSwing, { toValue: -0.4, duration: 140, useNativeDriver: true }),
-        Animated.timing(u.anims.lunge, { toValue: -0.15, duration: 140, useNativeDriver: true }),
-      ]),
-      Animated.parallel([
-        Animated.timing(u.anims.weaponSwing, { toValue: 1, duration: 120, useNativeDriver: true }),
-        Animated.timing(u.anims.lunge, { toValue: 1, duration: 120, useNativeDriver: true }),
-      ]),
-      Animated.parallel([
-        Animated.timing(u.anims.weaponSwing, { toValue: 0, duration: 200, useNativeDriver: true }),
-        Animated.timing(u.anims.lunge, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]),
-    ]).start();
+    if (isProjectile) {
+      // Ranged: draw back then release — the projectile carries the
+      // forward motion, so a melee-style lunge reads wrong here.
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(u.anims.weaponSwing, { toValue: -0.5, duration: 160, useNativeDriver: true }),
+          Animated.timing(u.anims.lunge, { toValue: -0.35, duration: 160, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(u.anims.weaponSwing, { toValue: 0.5, duration: 90, useNativeDriver: true }),
+          Animated.timing(u.anims.lunge, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]),
+        Animated.timing(u.anims.weaponSwing, { toValue: 0, duration: 160, useNativeDriver: true }),
+      ]).start();
+    } else {
+      // Melee: wind up, lunge into the target, recover.
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(u.anims.weaponSwing, { toValue: -0.4, duration: 140, useNativeDriver: true }),
+          Animated.timing(u.anims.lunge, { toValue: -0.15, duration: 140, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(u.anims.weaponSwing, { toValue: 1, duration: 120, useNativeDriver: true }),
+          Animated.timing(u.anims.lunge, { toValue: 1, duration: 120, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(u.anims.weaponSwing, { toValue: 0, duration: 200, useNativeDriver: true }),
+          Animated.timing(u.anims.lunge, { toValue: 0, duration: 200, useNativeDriver: true }),
+        ]),
+      ]).start();
+    }
     // Casters also pulse the cast aura.
     if (isProjectile && (u.heroClass === 'Mage' || u.heroClass === 'Necromancer' || u.heroClass === 'Cleric' || u.heroClass === 'Druid')) {
       Animated.sequence([
@@ -264,7 +313,25 @@ export class Engine {
     Animated.parallel([
       Animated.timing(u.anims.opacity, { toValue: 0.35, duration: 360, useNativeDriver: true }),
       Animated.timing(u.anims.scale, { toValue: 0.72, duration: 360, useNativeDriver: true }),
-    ]).start(() => this.notify());
+    ]).start(() => {
+      this.notify();
+      // Corpse lingers briefly for readability, then dissolves and is
+      // removed entirely. Without this, long siege battles accumulate
+      // dozens of ghost sprites that clutter the field and cost render
+      // time. Guards handle disposal/reset happening before the timer.
+      setTimeout(() => {
+        const still = this.units.get(id);
+        if (!still || still.alive) return;
+        Animated.timing(still.anims.opacity, { toValue: 0, duration: 700, useNativeDriver: true }).start(() => {
+          const gone = this.units.get(id);
+          if (gone && !gone.alive) {
+            gone.anims.bob.stopAnimation();
+            this.units.delete(id);
+            this.notify();
+          }
+        });
+      }, 2400);
+    });
   }
 
   // Big-hit screen shake (camera-level).
