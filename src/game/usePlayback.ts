@@ -32,6 +32,12 @@ export interface PlaybackApi {
   turnByTurnActive: boolean;
   turnSourceId: string | null;
   floats: Array<{ id: string; unitId: string; text: string; color: string; crit?: boolean; fontSize?: number; bornMs: number }>;
+  // Current wave (1-based) and how many waves the level has in total.
+  wave: number;
+  totalWaves: number;
+  // Transient center-screen banner ("BATTLE START", "WAVE 2 INCOMING").
+  // Keyed by id so the HUD can remount its animation per announcement.
+  announcement: { id: number; text: string } | null;
 }
 
 export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Engine | null>): PlaybackApi {
@@ -50,6 +56,10 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
   const [units, setUnits] = useState<UnitSnapshot[]>([]);
   const [result, setResult] = useState<BattleResultSummary | null>(null);
   const [floats, setFloats] = useState<PlaybackApi['floats']>([]);
+  const [wave, setWave] = useState(1);
+  const [announcement, setAnnouncement] = useState<PlaybackApi['announcement']>(null);
+  const announceId = useRef(1);
+  const totalWaves = 1 + (level?.waves?.length ?? 0);
 
   const mounted = useRef(true);
   const events = useRef<BattleEvent[]>([]);
@@ -79,6 +89,15 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     }, 1100);
   }
 
+  function pushAnnouncement(text: string) {
+    const id = announceId.current++;
+    safeSet(setAnnouncement, { id, text });
+    setTimeout(() => {
+      if (!mounted.current) return;
+      setAnnouncement((a) => (a?.id === id ? null : a));
+    }, 1900);
+  }
+
   useEffect(() => {
     mounted.current = true;
     doneRef.current = false;
@@ -99,6 +118,8 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     safeSet(setLog, []);
     safeSet(setResult, null);
     safeSet(setFloats, []);
+    safeSet(setWave, 1);
+    safeSet(setAnnouncement, null);
 
     try {
       const enemyCfg = level ? level.enemies : generateArenaWave(arenaWave);
@@ -148,8 +169,9 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
 
       safeSet(setLog, [{
         tick: 0, type: 'system' as const,
-        text: `🎯 ${playerUnits.length}v${enemyUnits.length} · ${computed.events.length} events queued`,
+        text: `⚔ Battle joined — ${playerUnits.length} hero${playerUnits.length === 1 ? '' : 'es'} vs ${enemyUnits.length} enem${enemyUnits.length === 1 ? 'y' : 'ies'}`,
       }]);
+      pushAnnouncement('⚔ BATTLE START');
     } catch (err) {
       console.warn('[playback] setup failed', err);
       const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -229,7 +251,11 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, battleSpeed]);
 
-  function commitBatch(batch: BattleEvent[]) {
+  // `silent` is used by fast-forward: keep the engine's FINAL field state
+  // correct (spawns, positions, deaths) but skip every transient effect.
+  // Without it, skipping a long battle fires hundreds of simultaneous
+  // particle/float/tween animations in one frame.
+  function commitBatch(batch: BattleEvent[], silent = false) {
     if (!batch.length) return;
     const lastTick = batch[batch.length - 1].tick;
     tickRef.current = lastTick;
@@ -237,7 +263,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
 
     const eng = engineRef.current;
     const reduce = store.settings?.reduceMotion ?? false;
-    const particles = store.settings?.particles ?? true;
+    const particles = (store.settings?.particles ?? true) && !silent;
 
     for (const ev of batch) {
       switch (ev.kind) {
@@ -251,16 +277,23 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
             });
           }
           break;
+        case 'wave':
+          if (!silent && typeof ev.value === 'number') {
+            safeSet(setWave, ev.value);
+            pushAnnouncement(`🌊 WAVE ${ev.value} INCOMING`);
+          } else if (typeof ev.value === 'number') {
+            safeSet(setWave, ev.value);
+          }
+          break;
         case 'move':
           if (eng && ev.sourceId && ev.toPosition) {
-            eng.moveUnit(ev.sourceId, ev.toPosition, reduce ? 80 : 320);
+            eng.moveUnit(ev.sourceId, ev.toPosition, silent ? 0 : reduce ? 80 : 320);
           }
           break;
         case 'attack':
         case 'projectile':
-          if (eng && ev.sourceId) {
-            const target = ev.targetId ? findUnitPos(ev.targetId) : null;
-            eng.attack(ev.sourceId, target, ev.kind === 'projectile');
+          if (eng && ev.sourceId && !silent) {
+            eng.attack(ev.sourceId, ev.targetId ?? null, ev.kind === 'projectile');
             if (ev.kind === 'projectile' && ev.targetId && particles) {
               setTimeout(() => {
                 if (!mounted.current) return;
@@ -270,7 +303,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
           }
           break;
         case 'damage':
-          if (eng && ev.targetId) {
+          if (eng && ev.targetId && !silent) {
             eng.takeHit(ev.targetId);
             if (particles) {
               const p = eng.unitScreenPos(ev.targetId);
@@ -280,7 +313,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
           }
           break;
         case 'crit':
-          if (eng && ev.targetId) {
+          if (eng && ev.targetId && !silent) {
             eng.worldShake(5);
             if (particles) {
               const p = eng.unitScreenPos(ev.targetId);
@@ -290,10 +323,10 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
           }
           break;
         case 'dodge':
-          if (ev.targetId) pushFloat(ev.targetId, 'MISS', '#9fd3ff', 13);
+          if (ev.targetId && !silent) pushFloat(ev.targetId, 'MISS', '#9fd3ff', 13);
           break;
         case 'heal':
-          if (eng && ev.targetId && ev.value) {
+          if (eng && ev.targetId && ev.value && !silent) {
             eng.cast(ev.targetId);
             if (particles) {
               const p = eng.unitScreenPos(ev.targetId);
@@ -303,7 +336,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
           }
           break;
         case 'ability':
-          if (eng && ev.sourceId) {
+          if (eng && ev.sourceId && !silent) {
             eng.cast(ev.sourceId);
             if (particles) {
               const p = eng.unitScreenPos(ev.sourceId);
@@ -316,14 +349,14 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
           }
           break;
         case 'shield':
-          if (ev.targetId && ev.value) pushFloat(ev.targetId, `+${ev.value} 🛡`, '#ffd24a', 12);
+          if (ev.targetId && ev.value && !silent) pushFloat(ev.targetId, `+${ev.value} 🛡`, '#ffd24a', 12);
           break;
         case 'death':
           if (eng && ev.targetId) {
-            const p = eng.unitScreenPos(ev.targetId);
+            const p = silent ? null : eng.unitScreenPos(ev.targetId);
             eng.killUnit(ev.targetId);
             if (p && particles) eng.spawnDeathWisps(p.x, p.y);
-            eng.worldShake(3);
+            if (!silent) eng.worldShake(3);
           }
           break;
       }
@@ -338,11 +371,6 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     );
     for (const l of newLogs) displayedLogTicks.current.add(`${l.tick}_${l.text}`);
     if (newLogs.length) setLog((prev) => [...prev, ...newLogs]);
-  }
-
-  function findUnitPos(id: string) {
-    const u = initialUnits.current.find((x) => x.id === id);
-    return u?.position ?? null;
   }
 
   function finish() {
@@ -428,7 +456,9 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     const rest: BattleEvent[] = [];
     while (evIdx.current < evs.length) { rest.push(evs[evIdx.current]); evIdx.current++; }
     if (rest.length) {
-      commitBatch(rest);
+      // Silent: sync the engine's final field state without playing
+      // hundreds of skipped animations at once.
+      commitBatch(rest, true);
     }
     setLog(logs.current.slice());
     finish();
@@ -450,6 +480,9 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     toggleTurnByTurn,
     turnByTurnActive: turnByTurnRef.current,
     turnSourceId: turnSourceRef.current,
+    wave,
+    totalWaves,
+    announcement,
   };
 }
 

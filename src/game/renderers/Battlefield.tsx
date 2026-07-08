@@ -69,6 +69,9 @@ export default function Battlefield({ layout, theme, obstacles, width, height }:
         const tw = hexW * 0.86;
         const th = hexH * Y_SQUASH * 1.05;
         const palette = t.seam ? theme.tileSeam : t.inPlayer ? theme.tilePlayer : theme.tileEnemy;
+        // Deterministic per-tile brightness variation so the board reads
+        // as terrain instead of a flat repeated pattern.
+        const vary = ((t.col * 7 + t.row * 13) % 3) * 0.045;
         return (
           <View
             key={`${t.col}_${t.row}`}
@@ -82,7 +85,7 @@ export default function Battlefield({ layout, theme, obstacles, width, height }:
               overflow: 'hidden',
               borderWidth: 1,
               borderColor: theme.tileRim + '66',
-              opacity: t.seam ? 0.6 : 0.55,
+              opacity: (t.seam ? 0.6 : 0.52) + vary,
             }}
           >
             <LinearGradient
@@ -140,6 +143,21 @@ export default function Battlefield({ layout, theme, obstacles, width, height }:
       {theme.haze && (
         <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.haze }]} pointerEvents="none" />
       )}
+
+      {/* Grounding vignette — dark falloff at the top and bottom edges
+          pulls focus to the middle of the field where the units are. */}
+      <LinearGradient
+        pointerEvents="none"
+        colors={['#00000055', '#00000000']}
+        start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 0.22 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        pointerEvents="none"
+        colors={['#00000000', '#00000066']}
+        start={{ x: 0.5, y: 0.78 }} end={{ x: 0.5, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
     </View>
   );
 }

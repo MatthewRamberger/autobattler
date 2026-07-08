@@ -14,11 +14,17 @@ import UnitSprite from '../sprite/UnitSprite';
 interface Props {
   unit: UnitEntity;
   cellSize: number;
+  // Mirrors unit.facing / unit.alive. The entity object is mutated in
+  // place by the engine, so its reference never changes — these explicit
+  // props are what lets React.memo notice a facing flip or death and
+  // re-render. Without them the memo comparison sees identical props
+  // and units keep facing the wrong way after walking past a target.
+  facing: 1 | -1;
+  alive: boolean;
 }
 
-const UnitRenderer = React.memo(function UnitRenderer({ unit, cellSize }: Props) {
+const UnitRenderer = React.memo(function UnitRenderer({ unit, cellSize, facing, alive }: Props) {
   const a = unit.anims;
-  const facing = unit.facing;
   const size = cellSize * 1.05;
 
   // Native-side interpolations.
@@ -53,6 +59,25 @@ const UnitRenderer = React.memo(function UnitRenderer({ unit, cellSize }: Props)
         },
       ]}
     >
+      {/* Ground shadow — grounds the sprite on its tile. Cheap static
+          ellipse; it rides the wrap's transforms, which is close enough
+          (the idle bob is only ±3px). Hidden once the corpse fade runs
+          so dead units don't leave floating shadows. */}
+      {alive && (
+        <View
+          style={{
+            position: 'absolute',
+            bottom: size * 0.06,
+            left: size * 0.24,
+            width: size * 0.52,
+            height: size * 0.13,
+            borderRadius: 999,
+            backgroundColor: '#000',
+            opacity: 0.28,
+          }}
+        />
+      )}
+
       {/* Caster glow halo behind the sprite when ability is firing. */}
       <Animated.View
         style={{
