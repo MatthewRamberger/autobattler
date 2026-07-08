@@ -17,6 +17,31 @@ import { BattleResultSummary, Phase, UnitSnapshot } from './types';
 
 const BASE_TICK_MS = 720;
 
+// Float label/color per status effect so debuffs are visible on the field
+// the moment they land, not only as tiny icons under the HP bar.
+const STATUS_FLOAT: Record<string, { label: string; color: string }> = {
+  burn: { label: '🔥 BURN', color: '#ff8a4a' },
+  poison: { label: '☠ POISON', color: '#9fd45a' },
+  stun: { label: '💫 STUN', color: '#ffe07a' },
+  freeze: { label: '❄ FROZEN', color: '#b8e6ff' },
+  slow: { label: '🐌 SLOW', color: '#9fb8d2' },
+  regen: { label: '💚 REGEN', color: '#5ef07a' },
+  shield: { label: '🛡 SHIELD', color: '#ffd24a' },
+  taunt: { label: '😡 TAUNT', color: '#ff8a78' },
+  rage: { label: '💢 RAGE', color: '#ff5d3c' },
+  bleed: { label: '🩸 BLEED', color: '#ff6a55' },
+  blind: { label: '🌑 BLIND', color: '#b89bff' },
+  silence: { label: '🤐 SILENCE', color: '#c9a3ff' },
+  fortify: { label: '🪨 FORTIFY', color: '#dcc6a2' },
+};
+
+const BOSS_TRAIT_LABEL: Record<string, string> = {
+  enrage: '⚠ BOSS TRAIT: ENRAGE',
+  summon: '⚠ BOSS TRAIT: SUMMONER',
+  'aoe-burst': '⚠ BOSS TRAIT: AOE BURST',
+  lifelink: '⚠ BOSS TRAIT: LIFELINK',
+};
+
 export interface PlaybackApi {
   isArena: boolean;
   level: ReturnType<typeof LEVELS.find> | null;
@@ -75,6 +100,9 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
   const displayedLogTicks = useRef<Set<string>>(new Set());
   const engineSeeded = useRef(false);
   const floatId = useRef(1);
+  // unit id → isPlayer, for classifying death events (multi-kill banners
+  // should only fire for ENEMY deaths). Populated at setup + on spawns.
+  const teamById = useRef<Map<string, boolean>>(new Map());
 
   const safeSet = useCallback(<T,>(setter: (v: T) => void, value: T) => {
     if (mounted.current) setter(value);
@@ -164,6 +192,7 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
 
       const all = [...playerUnits, ...enemyUnits];
       initialUnits.current = all.map((u) => ({ ...u, position: { ...u.position } }));
+      teamById.current = new Map(all.map((u) => [u.id, u.isPlayer]));
       setUnits(all.map(snapshotOf));
       maybeSeedEngine();
 
@@ -172,6 +201,12 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
         text: `⚔ Battle joined — ${playerUnits.length} hero${playerUnits.length === 1 ? '' : 'es'} vs ${enemyUnits.length} enem${enemyUnits.length === 1 ? 'y' : 'ies'}`,
       }]);
       pushAnnouncement('⚔ BATTLE START');
+      // Boss levels get a staggered heads-up about the boss's gimmick so
+      // the player knows what they're walking into.
+      if (level?.bossMechanic) {
+        const warn = BOSS_TRAIT_LABEL[level.bossMechanic];
+        if (warn) setTimeout(() => { if (mounted.current) pushAnnouncement(warn); }, 2100);
+      }
     } catch (err) {
       console.warn('[playback] setup failed', err);
       const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -265,22 +300,29 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
     const reduce = store.settings?.reduceMotion ?? false;
     const particles = (store.settings?.particles ?? true) && !silent;
 
+    // Enemy deaths in this batch — 2+ in one tick earns a kill banner.
+    let enemyKills = 0;
+
     for (const ev of batch) {
       switch (ev.kind) {
         case 'spawn':
-          if (ev.unit && eng) {
-            eng.spawnUnit({
-              id: ev.unit.id,
-              heroClass: ev.unit.heroClass,
-              isPlayer: ev.unit.isPlayer,
-              gridPos: ev.unit.position,
-            });
+          if (ev.unit) {
+            teamById.current.set(ev.unit.id, ev.unit.isPlayer);
+            if (eng) {
+              eng.spawnUnit({
+                id: ev.unit.id,
+                heroClass: ev.unit.heroClass,
+                isPlayer: ev.unit.isPlayer,
+                gridPos: ev.unit.position,
+              });
+            }
           }
           break;
         case 'wave':
           if (!silent && typeof ev.value === 'number') {
             safeSet(setWave, ev.value);
             pushAnnouncement(`🌊 WAVE ${ev.value} INCOMING`);
+            eng?.worldShake(4);
           } else if (typeof ev.value === 'number') {
             safeSet(setWave, ev.value);
           }
@@ -351,6 +393,12 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
         case 'shield':
           if (ev.targetId && ev.value && !silent) pushFloat(ev.targetId, `+${ev.value} 🛡`, '#ffd24a', 12);
           break;
+        case 'status_apply':
+          if (ev.targetId && ev.status && !silent) {
+            const f = STATUS_FLOAT[ev.status];
+            if (f) pushFloat(ev.targetId, f.label, f.color, 11);
+          }
+          break;
         case 'death':
           if (eng && ev.targetId) {
             const p = silent ? null : eng.unitScreenPos(ev.targetId);
@@ -358,8 +406,18 @@ export function usePlayback(grid: HexGrid, engineRef: React.MutableRefObject<Eng
             if (p && particles) eng.spawnDeathWisps(p.x, p.y);
             if (!silent) eng.worldShake(3);
           }
+          if (!silent && ev.targetId && teamById.current.get(ev.targetId) === false) {
+            enemyKills++;
+          }
           break;
       }
+    }
+
+    // Multi-kill flourish — several enemies dropping in the same tick.
+    if (!silent && enemyKills >= 2) {
+      pushAnnouncement(
+        enemyKills >= 4 ? '💀 RAMPAGE!' : enemyKills === 3 ? '💀 TRIPLE KILL!' : '💀 DOUBLE KILL!'
+      );
     }
 
     // Update React snapshots for the HUD (alive counts, stat table).

@@ -31,10 +31,13 @@ interface Props {
   units: UnitSnapshot[];
   floats: Array<{ id: string; unitId: string; text: string; color: string; crit?: boolean; fontSize?: number; bornMs: number }>;
   onEngineReady?: (engine: Engine) => void;
+  // Unit to spotlight with a pulsing ground ring (turn-by-turn mode's
+  // acting unit).
+  highlightId?: string | null;
 }
 
 export default function BattleCanvas({
-  width, height, grid, theme, obstacles, units, floats, onEngineReady,
+  width, height, grid, theme, obstacles, units, floats, onEngineReady, highlightId,
 }: Props) {
   const layout = useMemo(() => hexLayout(width, height * 1.2, grid), [width, height, grid]);
   const themeColors = useMemo(() => themeFor(theme), [theme]);
@@ -171,6 +174,14 @@ export default function BattleCanvas({
             height={contentH}
           />
 
+          {/* Turn-by-turn spotlight — pulsing ground ring under the
+              acting unit, behind everything that moves. */}
+          {highlightId && (() => {
+            const hu = snap.units.find((x) => x.id === highlightId);
+            if (!hu || !hu.alive) return null;
+            return <HighlightRing key={`ring_${hu.id}`} anims={hu.anims} cellSize={cellSize} isPlayer={hu.isPlayer} />;
+          })()}
+
           {/* Particles — behind units, but on top of terrain. */}
           {snap.particles.map((p) => (
             <ParticleRenderer key={p.id} p={p} />
@@ -251,6 +262,53 @@ export default function BattleCanvas({
 }
 
 // ---------------------------------------------------------------------
+// Pulsing ground ring under the turn-by-turn acting unit. Rides the
+// unit's tx/ty; the pulse loop runs on its own native-driver values.
+// ---------------------------------------------------------------------
+function HighlightRing({ anims, cellSize, isPlayer }: { anims: any; cellSize: number; isPlayer: boolean }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  const w = cellSize * 0.95;
+  const h = cellSize * 0.5; // squashed ellipse to sit "flat" on the tilted ground
+  const color = isPlayer ? '#ffd24a' : '#ff6a55';
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: -w / 2,
+        top: -h / 2 + cellSize * 0.06,
+        width: w,
+        height: h,
+        borderRadius: 999,
+        borderWidth: 2.5,
+        borderColor: color,
+        shadowColor: color,
+        shadowOpacity: 0.9,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 0 },
+        elevation: 6,
+        opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.95] }),
+        transform: [
+          { translateX: anims.tx },
+          { translateY: anims.ty },
+          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.06] }) },
+        ],
+      }}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------
 // HP/MP bar that follows a unit's Animated position. The bar itself
 // re-renders only when hp/mana React props change; positional motion
 // stays on the native side.
@@ -268,6 +326,17 @@ function HpBar({
   const tone = isPlayer ? palette.blue : palette.red;
   const fill = hpPct < 0.35 ? '#ff5d3c' : hpPct < 0.65 ? '#ffae3a' : '#5ef07a';
   const w = cellSize * 0.95;
+  // White blink on the bar whenever HP drops — makes it obvious WHICH
+  // bar just took the hit when several units are clustered.
+  const dmgFlash = useRef(new Animated.Value(0)).current;
+  const prevHp = useRef(hp);
+  useEffect(() => {
+    if (hp < prevHp.current) {
+      dmgFlash.setValue(1);
+      Animated.timing(dmgFlash, { toValue: 0, duration: 320, useNativeDriver: true }).start();
+    }
+    prevHp.current = hp;
+  }, [hp]);
   return (
     <Animated.View
       pointerEvents="none"
@@ -296,6 +365,14 @@ function HpBar({
         overflow: 'hidden',
       }}>
         <View style={{ width: `${hpPct * 100}%`, height: '100%', backgroundColor: fill }} />
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            ...StyleSheet.absoluteFillObject,
+            backgroundColor: '#ffffff',
+            opacity: dmgFlash.interpolate({ inputRange: [0, 1], outputRange: [0, 0.85] }),
+          }}
+        />
       </View>
       {maxMana > 0 && (
         <View style={{
